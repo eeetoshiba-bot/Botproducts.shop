@@ -15,7 +15,7 @@ PRODUCTS = {
  "premium3day":     {"name":"Premium","len":"3 days","gamepass":0,"robux":50,"tone":"mint"},
  "premiumweek":     {"name":"Premium","len":"1 week","gamepass":0,"robux":100,"tone":"sky"},
  "premiummonth":    {"name":"Premium","len":"1 month","gamepass":0,"robux":300,"tone":"grape"},
- "premiumunlimited":{"name":"Premium","len":"Unlimited","gamepass":0,"robux":550,"tone":"sun","note":"or 1 server boost"},
+ "premiumunlimited":{"name":"Premium","len":"Unlimited","gamepass":1942003263,"robux":550,"tone":"sun","note":"or 1 server boost"},
  "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","gamepass":0,"robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
