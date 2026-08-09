@@ -15,7 +15,7 @@ PRODUCTS = {
  "premium3day":     {"name":"Premium","len":"3 days","gamepass":0,"robux":50,"tone":"mint"},
  "premiumweek":     {"name":"Premium","len":"1 week","gamepass":0,"robux":100,"tone":"sky"},
  "premiummonth":    {"name":"Premium","len":"1 month","gamepass":0,"robux":300,"tone":"grape"},
- "premiumunlimited":{"name":"Premium","len":"Unlimited","gamepass":1942003263,"robux":550,"tone":"sun","note":"or 1 server boost"},
+ "premiumunlimited":{"name":"Premium","len":"Unlimited","gamepass":0,"robux":550,"tone":"sun","note":"or 1 server boost"},
  "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","gamepass":0,"robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
@@ -138,6 +138,17 @@ select:focus,input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 {% if key %}<span class="key">{{key}}</span><div class="steps">Discord: /activatekey product:{{product_id}} key:{{key}}</div>{% endif %}</div>{% endif %}
 </div><div class="foot">ROBUKS GENERATOR · verified via real Roblox sales · keys single-use</div>
 </div></body></html>"""
+
+@app.route("/debug")
+def debug():
+    return {
+        "cookie_present": bool(ROBLOX_COOKIE),
+        "cookie_length": len(ROBLOX_COOKIE) if ROBLOX_COOKIE else 0,
+        "cookie_starts_warning": ROBLOX_COOKIE.startswith("_|WARNING") if ROBLOX_COOKIE else False,
+        "upstash_url_present": bool(REDIS_URL),
+        "upstash_token_present": bool(REDIS_TOKEN),
+        "authed_id": _authed_id() if ROBLOX_COOKIE else None,
+    }, 200
 
 @app.route("/")
 def home():
