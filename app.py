@@ -54,40 +54,45 @@ def roblox_bio(user_id):
 
 # ---- Open Cloud: create a gamepass automatically ----
 def create_gamepass(display_name, price):
-    """Create a gamepass via Roblox Open Cloud. Returns (gamepass_id, raw_response, error).
-    Beta API — tries JSON first, logs the Accept-Post header so we know the wanted format."""
+    """Create a gamepass via Roblox Open Cloud. Tries several body formats and logs each."""
     if not ROBLOX_API_KEY:
         return None, None, "no api key"
     url = f"https://apis.roblox.com/game-passes/v1/universes/{UNIVERSE_ID}/game-passes"
-    body = {
-        "displayName": display_name[:50],
-        "description": "Auto-generated premium pass",
-        "price": int(price),
-        "isForSale": True,
-    }
-    # attempt 1: JSON with explicit charset
-    for attempt, (headers, payload_kind) in enumerate([
-        ({"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json; charset=utf-8"}, "json"),
-        ({"x-api-key": ROBLOX_API_KEY}, "multipart"),
-    ]):
+    name = display_name[:50]
+    body = {"Name": name, "Description": "Premium pass", "Price": int(price), "IsForSale": True}
+
+    attempts = [
+        # (label, kwargs for requests.post)
+        ("json-plain", {"headers": {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"},
+                         "json": body}),
+        ("json-lowername", {"headers": {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"},
+                         "json": {"name": name, "description": "Premium pass", "price": int(price), "isForSale": True}}),
+        ("multipart-request-json", {"headers": {"x-api-key": ROBLOX_API_KEY},
+                         "files": {"request": (None, json.dumps(body), "application/json")}}),
+        ("multipart-fields", {"headers": {"x-api-key": ROBLOX_API_KEY},
+                         "files": {"Name": (None, name), "Description": (None, "Premium pass"),
+                                   "Price": (None, str(int(price))), "IsForSale": (None, "true")}}),
+        ("form-urlencoded", {"headers": {"x-api-key": ROBLOX_API_KEY,
+                         "Content-Type": "application/x-www-form-urlencoded"},
+                         "data": {"Name": name, "Description": "Premium pass",
+                                  "Price": str(int(price)), "IsForSale": "true"}}),
+    ]
+    last = None
+    for label, kw in attempts:
         try:
-            if payload_kind == "json":
-                r = requests.post(url, headers=headers, json=body, timeout=20)
-            else:
-                # multipart form with a 'request' field, like Roblox's asset API
-                r = requests.post(url, headers=headers,
-                                  files={"request": (None, json.dumps(body))}, timeout=20)
-            print(f"🎟️ create attempt{attempt+1} kind={payload_kind} status={r.status_code} "
-                  f"accept-post={r.headers.get('Accept-Post','')} body={r.text[:400]}", flush=True)
+            r = requests.post(url, timeout=20, **kw)
+            last = r
+            print(f"🎟️ [{label}] status={r.status_code} body={r.text[:300]}", flush=True)
             if r.status_code in (200, 201):
                 data = r.json()
                 gpid = (data.get("gamePassId") or data.get("id")
                         or (data.get("gamePass") or {}).get("id")
                         or (data.get("path","").split("/")[-1] if data.get("path") else None))
+                print(f"🎟️ SUCCESS with format [{label}] gpid={gpid}", flush=True)
                 return gpid, data, None
         except Exception as ex:
-            print(f"create attempt{attempt+1} err: {ex}", flush=True)
-    return None, r.text if 'r' in dir() else None, f"status {r.status_code if 'r' in dir() else '?'}"
+            print(f"🎟️ [{label}] err: {ex}", flush=True)
+    return None, (last.text if last is not None else None), f"status {last.status_code if last is not None else '?'}"
 
 def roblox_user_id(u):
     try:
@@ -289,7 +294,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v8-415fix", 200
+    return "shop build=v10-formats", 200
 
 @app.route("/testcreate")
 def testcreate():
@@ -303,6 +308,7 @@ def testcreate():
         "created_gamepass_id": gpid,
         "error": err,
         "raw_response": raw,
+        "note": "check Render logs for 🎟️ lines to see which format worked",
     }, 200
 
 @app.route("/")
