@@ -247,7 +247,19 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v24-stock", 200
+def version(): return "shop build=v25-testcreate", 200
+
+@app.route("/testcreate")
+def testcreate():
+    """Manually create a gamepass. /testcreate?name=MyPass&price=50"""
+    name = request.args.get("name", "Test Pass")
+    price = int(request.args.get("price", "5"))
+    gpid, err = create_gamepass(name, price)
+    if gpid:
+        return {"created_gamepass_id": gpid,
+                "buy_link": f"https://www.roblox.com/game-pass/{gpid}",
+                "price": price, "name": name}, 200
+    return {"error": err, "created_gamepass_id": None}, 200
 
 @app.route("/")
 def home():
