@@ -14,7 +14,7 @@ SALE_WINDOW  = int(os.getenv("SALE_WINDOW", str(7*24*3600)))
 PRODUCTS = {
  "premium3day":     {"name":"Premium","len":"3 days","gamepass":0,"robux":50,"tone":"mint"},
  "premiumweek":     {"name":"Premium","len":"1 week","gamepass":0,"robux":100,"tone":"sky"},
- "premiummonth":    {"name":"Premium","len":"1 month","gamepass":1942177451,"robux":300,"tone":"grape"},
+ "premiummonth":    {"name":"Premium","len":"1 month","gamepass":0,"robux":300,"tone":"grape"},
  "premiumunlimited":{"name":"Premium","len":"Unlimited","gamepass":1941667473,"robux":550,"tone":"sun","note":"or 1 server boost"},
  "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","gamepass":0,"robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
 }
@@ -149,6 +149,36 @@ def debug():
         "upstash_token_present": bool(REDIS_TOKEN),
         "authed_id": _authed_id() if ROBLOX_COOKIE else None,
     }, 200
+
+@app.route("/debugtx")
+def debugtx():
+    """Debug: show what the transaction check sees. /debugtx?username=X&product=premiumunlimited"""
+    username = request.args.get("username","").strip()
+    product = request.args.get("product","premiumunlimited").strip()
+    out = {"cookie_present": bool(ROBLOX_COOKIE)}
+    seller = _authed_id()
+    out["seller_id"] = seller
+    if product in PRODUCTS:
+        out["gamepass_id"] = PRODUCTS[product]["gamepass"]
+    if username:
+        uid, real = roblox_user_id(username)
+        out["buyer_id"] = uid
+        out["buyer_name"] = real
+    # dump the first few raw sales so we can see the actual structure
+    if seller:
+        h = _headers()
+        try:
+            url = f"https://economy.roblox.com/v2/users/{seller}/transactions?transactionType=Sale&limit=10"
+            r = _session.get(url, headers=h, timeout=12)
+            out["sales_status"] = r.status_code
+            data = r.json()
+            out["sample_sales"] = [
+                {"details": tx.get("details"), "agent": tx.get("agent"), "created": tx.get("created")}
+                for tx in data.get("data", [])[:5]
+            ]
+        except Exception as ex:
+            out["sales_error"] = str(ex)
+    return out, 200
 
 @app.route("/")
 def home():
