@@ -55,31 +55,39 @@ def roblox_bio(user_id):
 # ---- Open Cloud: create a gamepass automatically ----
 def create_gamepass(display_name, price):
     """Create a gamepass via Roblox Open Cloud. Returns (gamepass_id, raw_response, error).
-    Beta API — we log the full response so we can adapt the format if needed."""
+    Beta API — tries JSON first, logs the Accept-Post header so we know the wanted format."""
     if not ROBLOX_API_KEY:
         return None, None, "no api key"
     url = f"https://apis.roblox.com/game-passes/v1/universes/{UNIVERSE_ID}/game-passes"
-    headers = {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"}
-    # best-guess body based on Roblox Open Cloud conventions; we'll adjust from the logged response
     body = {
         "displayName": display_name[:50],
-        "price": {"currency": "Robux", "amount": int(price)},
+        "description": "Auto-generated premium pass",
+        "price": int(price),
         "isForSale": True,
     }
-    try:
-        r = requests.post(url, headers=headers, json=body, timeout=20)
-        print(f"🎟️ create_gamepass status={r.status_code} body={r.text[:400]}", flush=True)
-        if r.status_code not in (200, 201):
-            return None, r.text, f"status {r.status_code}"
-        data = r.json()
-        # try common field names for the new gamepass id
-        gpid = (data.get("gamePassId") or data.get("id")
-                or (data.get("gamePass") or {}).get("id")
-                or (data.get("path","").split("/")[-1] if data.get("path") else None))
-        return gpid, data, None
-    except Exception as ex:
-        print(f"create_gamepass err: {ex}", flush=True)
-        return None, None, str(ex)
+    # attempt 1: JSON with explicit charset
+    for attempt, (headers, payload_kind) in enumerate([
+        ({"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json; charset=utf-8"}, "json"),
+        ({"x-api-key": ROBLOX_API_KEY}, "multipart"),
+    ]):
+        try:
+            if payload_kind == "json":
+                r = requests.post(url, headers=headers, json=body, timeout=20)
+            else:
+                # multipart form with a 'request' field, like Roblox's asset API
+                r = requests.post(url, headers=headers,
+                                  files={"request": (None, json.dumps(body))}, timeout=20)
+            print(f"🎟️ create attempt{attempt+1} kind={payload_kind} status={r.status_code} "
+                  f"accept-post={r.headers.get('Accept-Post','')} body={r.text[:400]}", flush=True)
+            if r.status_code in (200, 201):
+                data = r.json()
+                gpid = (data.get("gamePassId") or data.get("id")
+                        or (data.get("gamePass") or {}).get("id")
+                        or (data.get("path","").split("/")[-1] if data.get("path") else None))
+                return gpid, data, None
+        except Exception as ex:
+            print(f"create attempt{attempt+1} err: {ex}", flush=True)
+    return None, r.text if 'r' in dir() else None, f"status {r.status_code if 'r' in dir() else '?'}"
 
 def roblox_user_id(u):
     try:
@@ -281,7 +289,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v7-autocreate", 200
+    return "shop build=v8-415fix", 200
 
 @app.route("/testcreate")
 def testcreate():
