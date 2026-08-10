@@ -15,11 +15,11 @@ OWNER_NAME   = "kiwi_brown_dog"
 
 # Bot Premium — auto-activated with /activatekey
 PRODUCTS = {
- "premium3day":     {"name":"Premium","len":"3 days","robux":1,"tone":"mint"},
- "premiumweek":     {"name":"Premium","len":"1 week","robux":2,"tone":"sky"},
- "premiummonth":    {"name":"Premium","len":"1 month","robux":3,"tone":"grape"},
- "premiumunlimited":{"name":"Premium","len":"Unlimited","robux":4,"tone":"sun","note":"or 1 server boost"},
- "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","robux":5,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
+ "premium3day":     {"name":"Premium","len":"3 days","robux":50,"tone":"mint"},
+ "premiumweek":     {"name":"Premium","len":"1 week","robux":100,"tone":"sky"},
+ "premiummonth":    {"name":"Premium","len":"1 month","robux":300,"tone":"grape"},
+ "premiumunlimited":{"name":"Premium","len":"Unlimited","robux":550,"tone":"sun","note":"or 1 server boost"},
+ "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
 }
 # Seller Deals — manual fulfilment (DM owner with the key)
 SELLER_DEALS = {
@@ -222,7 +222,7 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v19-tabs", 200
+def version(): return "shop build=v21-realprices", 200
 
 @app.route("/")
 def home():
@@ -303,10 +303,12 @@ def claim():
         _redis("DEL",f"biocode:{uid}:{product}"); _redis("DEL",pass_key)
     except Exception as ex:
         print("store err",ex,flush=True); return render(tab=tab,step="done",result="⚠️ Key store error.",result_class="err")
-    # notify owner for seller deals (bot watches this list)
-    if tab=="seller":
-        try: _redis("RPUSH","sellerorders",json.dumps({"key":key,"product":f"{p['name']} {p['len']}","roblox":real,"ts":int(time.time())}))
-        except Exception: pass
+    # notify owner about EVERY purchase (premium + seller)
+    try:
+        _redis("RPUSH","sellerorders",json.dumps({
+            "kind": tab, "key": key, "product": f"{p['name']} {p['len']}",
+            "roblox": real, "ts": int(time.time())}))
+    except Exception: pass
     print(f"KEY ISSUED kind={tab} product={product} roblox={real}({uid}) key={key[:6]}…",flush=True)
     if tab=="seller":
         msg=f"✅ Purchase verified for <b>{real}</b>! Here's your <b>{p['name']} · {p['len']}</b> key:"
