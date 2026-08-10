@@ -60,6 +60,7 @@ def _authed_id():
 def buyer_purchased(seller,buyer,gp):
     if not seller: return False,"cookie not logged in"
     h=_headers(); cursor=""; now=time.time()
+    print(f"🔎 checking: seller={seller} buyer={buyer} gamepass={gp}",flush=True)
     for _ in range(6):
         url=(f"https://economy.roblox.com/v2/users/{seller}/transactions"
              f"?transactionType=Sale&limit=100&cursor={cursor}")
@@ -67,7 +68,14 @@ def buyer_purchased(seller,buyer,gp):
         except Exception as ex: return False,f"fetch err {ex}"
         if r.status_code!=200: return False,f"status {r.status_code}"
         data=r.json()
-        for tx in data.get("data",[]):
+        rows=data.get("data",[])
+        print(f"🔎 got {len(rows)} sales this page",flush=True)
+        for tx in rows[:8]:
+            det=tx.get("details") or {}; ag=tx.get("agent") or {}
+            print(f"   sale: det.id={det.get('id')} det.type={det.get('type')} "
+                  f"det.name={det.get('name')!r} agent.id={ag.get('id')} agent.name={ag.get('name')!r} "
+                  f"created={tx.get('created')}",flush=True)
+        for tx in rows:
             det=tx.get("details") or {}; ag=tx.get("agent") or {}
             by=str(ag.get("id"))==str(buyer)
             same=str(det.get("id"))==str(gp)
@@ -187,7 +195,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v3-cookiefix", 200
+    return "shop build=v4-salelog", 200
 
 @app.route("/")
 def home():
