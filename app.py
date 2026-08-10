@@ -54,25 +54,37 @@ def roblox_bio(user_id):
 
 # ---- Open Cloud: create a gamepass automatically ----
 def create_gamepass(display_name, price):
-    """Create a gamepass via Roblox Open Cloud — identical call to the working /testcreate."""
+    """Try every known body format; use whichever Roblox accepts. Logs the winner."""
     if not ROBLOX_API_KEY:
         return None, None, "no api key"
     safe = "".join(c for c in display_name if c.isalnum() or c in " -_")
     safe = " ".join(safe.split())[:45] or "Premium Pass"
     url = f"https://apis.roblox.com/game-passes/v1/universes/{UNIVERSE_ID}/game-passes"
-    headers = {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"}
+    K = ROBLOX_API_KEY
     body = {"Name": safe, "Description": "Premium pass", "Price": int(price), "IsForSale": True}
-    try:
-        r = requests.post(url, headers=headers, json=body, timeout=20)
-        print(f"🎟️ create name={safe!r} price={price} status={r.status_code} "
-              f"sent-ct={r.request.headers.get('Content-Type')} body={r.text[:300]}", flush=True)
-        if r.status_code in (200, 201):
-            data = r.json()
-            return data.get("gamePassId") or data.get("id"), data, None
-        return None, r.text, f"status {r.status_code}"
-    except Exception as ex:
-        print(f"create err: {ex}", flush=True)
-        return None, None, str(ex)
+    lbody = {"name": safe, "description": "Premium pass", "price": int(price), "isForSale": True}
+    attempts = [
+        ("multipart-request", {"headers": {"x-api-key": K},
+            "files": {"request": (None, json.dumps(body), "application/json")}}),
+        ("multipart-fields", {"headers": {"x-api-key": K},
+            "files": {"Name": (None, safe), "Description": (None, "Premium pass"),
+                      "Price": (None, str(int(price))), "IsForSale": (None, "true")}}),
+        ("json-caps", {"headers": {"x-api-key": K, "Content-Type": "application/json"}, "json": body}),
+        ("json-lower", {"headers": {"x-api-key": K, "Content-Type": "application/json"}, "json": lbody}),
+    ]
+    last = None
+    for label, kw in attempts:
+        try:
+            r = requests.post(url, timeout=20, **kw); last = r
+            print(f"🎟️ [{label}] status={r.status_code} body={r.text[:250]}", flush=True)
+            if r.status_code in (200, 201):
+                d = r.json()
+                gid = d.get("gamePassId") or d.get("id")
+                print(f"🎟️ ✅ WINNER=[{label}] gamePassId={gid}", flush=True)
+                return gid, d, None
+        except Exception as ex:
+            print(f"🎟️ [{label}] err {ex}", flush=True)
+    return None, (last.text if last else None), f"status {last.status_code if last else '?'}"
 
 def roblox_user_id(u):
     try:
@@ -274,7 +286,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v16-match", 200
+    return "shop build=v17-allformats", 200
 
 @app.route("/testcreate")
 def testcreate():
