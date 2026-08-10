@@ -147,6 +147,7 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 <div class="tabs">
   <a class="tab {% if tab=='premium' %}active{% endif %}" href="/?tab=premium">💎 Bot Premium</a>
   <a class="tab {% if tab=='seller' %}active{% endif %}" href="/?tab=seller">🛍️ Seller Deals</a>
+  <a class="tab" href="https://discord.gg/JS7AQrwbKS" target="_blank">💬 Join Discord</a>
 </div>
 
 {% if step == 1 %}
@@ -222,7 +223,7 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v21-realprices", 200
+def version(): return "shop build=v22-serverlink", 200
 
 @app.route("/")
 def home():
