@@ -57,7 +57,25 @@ def _authed_id():
     except Exception as ex: print("authed err",ex,flush=True)
     return None
 
+def owns_gamepass(user_id, gamepass_id):
+    """Check if a user owns a gamepass via the public inventory API (reliable for gamepasses)."""
+    try:
+        url=f"https://inventory.roblox.com/v1/users/{user_id}/items/GamePass/{gamepass_id}"
+        r=requests.get(url,timeout=10)
+        print(f"🔎 ownership check user={user_id} gp={gamepass_id} status={r.status_code} body={r.text[:120]}",flush=True)
+        if r.status_code!=200:
+            return False
+        return len(r.json().get("data",[]))>0
+    except Exception as ex:
+        print(f"owns_gamepass err {ex}",flush=True)
+        return False
+
 def buyer_purchased(seller,buyer,gp):
+    # gamepass purchases are verified by OWNERSHIP (reliable). No transactions needed.
+    owns = owns_gamepass(buyer, gp)
+    return (True,"owns gamepass") if owns else (False,"doesn't own gamepass")
+
+def _unused_old_tx(seller,buyer,gp):
     if not seller: return False,"cookie not logged in"
     h=_headers(); cursor=""; now=time.time()
     print(f"🔎 checking: seller={seller} buyer={buyer} gamepass={gp}",flush=True)
@@ -69,12 +87,6 @@ def buyer_purchased(seller,buyer,gp):
         if r.status_code!=200: return False,f"status {r.status_code}"
         data=r.json()
         rows=data.get("data",[])
-        print(f"🔎 got {len(rows)} sales this page",flush=True)
-        for tx in rows[:8]:
-            det=tx.get("details") or {}; ag=tx.get("agent") or {}
-            print(f"   sale: det.id={det.get('id')} det.type={det.get('type')} "
-                  f"det.name={det.get('name')!r} agent.id={ag.get('id')} agent.name={ag.get('name')!r} "
-                  f"created={tx.get('created')}",flush=True)
         for tx in rows:
             det=tx.get("details") or {}; ag=tx.get("agent") or {}
             by=str(ag.get("id"))==str(buyer)
@@ -195,7 +207,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v4-salelog", 200
+    return "shop build=v5-ownership", 200
 
 @app.route("/")
 def home():
