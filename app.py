@@ -14,11 +14,11 @@ LOGO_URL     = os.getenv("LOGO_URL", "")
 SALE_WINDOW  = int(os.getenv("SALE_WINDOW", str(7*24*3600)))
 
 PRODUCTS = {
- "premium3day":     {"name":"Premium","len":"3 days","gamepass":0,"robux":50,"tone":"mint"},
- "premiumweek":     {"name":"Premium","len":"1 week","gamepass":0,"robux":100,"tone":"sky"},
- "premiummonth":    {"name":"Premium","len":"1 month","gamepass":0,"robux":300,"tone":"grape"},
- "premiumunlimited":{"name":"Premium","len":"Unlimited","gamepass":1941667473,"robux":550,"tone":"sun","note":"or 1 server boost"},
- "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","gamepass":0,"robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
+ "premium3day":     {"name":"Premium","len":"3 days","gamepass":0,"robux":1,"tone":"mint"},
+ "premiumweek":     {"name":"Premium","len":"1 week","gamepass":0,"robux":2,"tone":"sky"},
+ "premiummonth":    {"name":"Premium","len":"1 month","gamepass":0,"robux":3,"tone":"grape"},
+ "premiumunlimited":{"name":"Premium","len":"Unlimited","gamepass":0,"robux":4,"tone":"sun","note":"or 1 server boost"},
+ "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","gamepass":0,"robux":5,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
@@ -199,7 +199,7 @@ select:focus,input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 {% for pid,p in products.items() %}<div class="plan"><div class="tone {{p.tone}}"></div><div class="len">{{p.len}}</div>
 <div class="nm">{{p.name}}</div><div class="price">{{p.robux}} <b>R$</b></div><div class="note">{{p.note or ""}}</div>
 {% if p.gamepass %}<a class="buy" href="https://www.roblox.com/game-pass/{{p.gamepass}}" target="_blank">Buy on Roblox</a>
-{% else %}<span class="buy off">coming soon</span>{% endif %}</div>{% endfor %}</div>
+{% else %}<a class="buy" href="#claim">Claim below ↓</a>{% endif %}</div>{% endfor %}</div>
 <div class="lab">Un-blacklist</div><div class="chips">
 {% for u in unblacklist %}<div class="chip"><div class="cl">{{u.len}}</div><div class="cp">{{u.robux}} R$</div></div>{% endfor %}</div>
 <div class="redeem"><h3>🔑 Claim your key</h3>
@@ -276,7 +276,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v13-safename", 200
+    return "shop build=v14-testprices", 200
 
 @app.route("/testcreate")
 def testcreate():
@@ -308,7 +308,7 @@ def start():
         base.update(kw); return render_template_string(PAGE, **base)
     if product not in PRODUCTS: return show(result="❌ Unknown plan.", result_class="err")
     p = PRODUCTS[product]
-    if not p["gamepass"]: return show(result="⚠️ This plan isn't set up yet.", result_class="err")
+    # (gamepass is created on-demand after bio-verify, so no pre-set check needed)
     if not username: return show(result="❌ Type your Roblox username.", result_class="err")
     uid, real = roblox_user_id(username)
     if not uid: return show(result=f"❌ Couldn't find '{username}'.", result_class="err")
