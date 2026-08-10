@@ -13,23 +13,38 @@ UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "34574007")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 OWNER_NAME   = "kiwi_brown_dog"
 
-# Bot Premium — auto-activated with /activatekey
+# Bot Premium — auto-activated with /activatekey. 'pid' = stock product id.
 PRODUCTS = {
- "premium3day":     {"name":"Premium","len":"3 days","robux":50,"tone":"mint"},
- "premiumweek":     {"name":"Premium","len":"1 week","robux":100,"tone":"sky"},
- "premiummonth":    {"name":"Premium","len":"1 month","robux":300,"tone":"grape"},
- "premiumunlimited":{"name":"Premium","len":"Unlimited","robux":550,"tone":"sun","note":"or 1 server boost"},
- "premiumimmune":   {"name":"Premium + Immune","len":"Unlimited","robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
+ "premium3day":     {"pid":"p1","name":"Premium","len":"3 days","robux":50,"tone":"mint"},
+ "premiumweek":     {"pid":"p2","name":"Premium","len":"1 week","robux":100,"tone":"sky"},
+ "premiummonth":    {"pid":"p3","name":"Premium","len":"1 month","robux":300,"tone":"grape"},
+ "premiumunlimited":{"pid":"p4","name":"Premium","len":"Unlimited","robux":550,"tone":"sun","note":"or 1 server boost"},
+ "premiumimmune":   {"pid":"p5","name":"Premium + Immune","len":"Unlimited","robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
 }
 # Seller Deals — manual fulfilment (DM owner with the key)
 SELLER_DEALS = {
- "nitro1mo": {"name":"Discord Nitro","len":"1 Month Basic","robux":1000,"tone":"grape",
+ "nitro1mo": {"pid":"s1","name":"Discord Nitro","len":"1 Month Basic","robux":1000,"tone":"grape",
               "note":"DM " + OWNER_NAME + " with your key to claim"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
 
 def catalog(kind): return PRODUCTS if kind=="premium" else SELLER_DEALS
+
+def get_stock(pid):
+    """Current stock for a product id (default 0)."""
+    try:
+        v = _redis("GET", f"stock:{pid}")
+        return int(v) if v is not None else 0
+    except Exception:
+        return 0
+
+def dec_stock(pid):
+    """Reduce stock by 1 (after a successful purchase)."""
+    try:
+        _redis("DECR", f"stock:{pid}")
+    except Exception:
+        pass
 
 def _redis(*c):
     if not REDIS_URL or not REDIS_TOKEN: raise RuntimeError("no upstash")
@@ -157,7 +172,10 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 <div class="card"><div class="tone" style="background:{{ tones[p.tone] }}"></div>
 <div class="len">{{p.len}}</div><div class="nm">{{p.name}}</div>
 <div class="price">{{p.robux}} <b>R$</b></div><div class="note">{{p.note or ""}}</div>
-<a class="pick" href="/start?tab={{tab}}&product={{pid}}">Select →</a></div>
+<div class="note" style="font-family:'DM Mono';color:{% if stock.get(pid,0)>0 %}#1c9c5e{% else %}#c0392b{% endif %}">
+  {% if stock.get(pid,0)>0 %}📦 {{ stock[pid] }} in stock{% else %}❌ Out of stock{% endif %}</div>
+{% if stock.get(pid,0)>0 %}<a class="pick" href="/start?tab={{tab}}&product={{pid}}">Select →</a>
+{% else %}<span class="pick" style="background:#efe7f5;color:#a99cbf;box-shadow:none;cursor:not-allowed">Out of stock</span>{% endif %}</div>
 {% endfor %}
 </div>
 {% if tab=='premium' %}
@@ -219,11 +237,17 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 
 def render(**kw):
     base=dict(products=PRODUCTS,unblacklist=UNBLACKLIST,logo=LOGO_URL,tones=TONES,owner=OWNER_NAME,
-              tab="premium",step=1,items=PRODUCTS,result=None,key=None)
+              tab="premium",step=1,items=PRODUCTS,result=None,key=None,stock={})
+    # compute stock for whichever catalog is shown
+    items = kw.get("items", base["items"])
+    try:
+        base["stock"] = {pid: get_stock(p["pid"]) for pid, p in items.items()}
+    except Exception:
+        base["stock"] = {}
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v22-serverlink", 200
+def version(): return "shop build=v24-stock", 200
 
 @app.route("/")
 def home():
@@ -236,6 +260,8 @@ def start():
     tab=request.args.get("tab","premium"); product=request.args.get("product","")
     cat=catalog(tab)
     if product not in cat: return render(tab=tab,step=1,items=cat,result="❌ Unknown plan.",result_class="err")
+    if get_stock(cat[product]["pid"]) <= 0:
+        return render(tab=tab,step=1,items=cat,result="❌ That product is out of stock.",result_class="err")
     return render(tab=tab,step="name",items=cat,product=product,p=cat[product])
 
 @app.route("/getcode",methods=["POST"])
@@ -295,6 +321,9 @@ def claim():
     gpid=int(existing)
     if not owns_gamepass(uid,gpid):
         return buystage(gpid,"❌ You don't own the pass yet — buy it, then verify.","err")
+    # stock check (in case it sold out while they were buying)
+    if get_stock(p["pid"]) <= 0:
+        return render(tab=tab,step="done",result="❌ Sorry, this product just went out of stock.",result_class="err")
     # issue key (store metadata for /keylookup)
     key=gen_key()
     entry=json.dumps({"kind":tab,"product":product,"product_name":f"{p['name']} {p['len']}",
@@ -302,6 +331,7 @@ def claim():
     try:
         _redis("SET",f"key:{key}",entry)
         _redis("DEL",f"biocode:{uid}:{product}"); _redis("DEL",pass_key)
+        dec_stock(p["pid"])   # one sold
     except Exception as ex:
         print("store err",ex,flush=True); return render(tab=tab,step="done",result="⚠️ Key store error.",result_class="err")
     # notify owner about EVERY purchase (premium + seller)
