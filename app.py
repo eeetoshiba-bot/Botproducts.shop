@@ -8,6 +8,8 @@ app = Flask(__name__)
 REDIS_URL    = os.getenv("UPSTASH_REDIS_REST_URL", "")
 REDIS_TOKEN  = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 ROBLOX_COOKIE= os.getenv("ROBLOX_COOKIE", "")
+ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY", "")   # Open Cloud key with game-passes read+write
+UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "3842120926")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 SALE_WINDOW  = int(os.getenv("SALE_WINDOW", str(7*24*3600)))
 
@@ -26,6 +28,58 @@ def _redis(*c):
     r=requests.post(REDIS_URL,headers={"Authorization":f"Bearer {REDIS_TOKEN}"},json=list(c),timeout=10)
     r.raise_for_status(); return r.json().get("result")
 def gen_key(n=20): return "".join(secrets.choice(KEY_CHARS) for _ in range(n))
+
+# ---- bio-code identity verification ----
+_WORDS = ["unicorn","friends","dragon","cookie","rocket","banana","pixel","ninja","turbo",
+          "galaxy","noodle","waffle","cactus","pickle","zebra","comet","donut","llama",
+          "mango","panda","robot","sunny","tiger","viper","wizard","yeti","bubble","cloud"]
+
+def gen_bio_code():
+    """Random phrase like 'unicornfriends994' or 'turbopanda'."""
+    n = secrets.choice([2, 2, 3])  # 2-3 words
+    words = "".join(secrets.choice(_WORDS) for _ in range(n))
+    if secrets.choice([True, False]):
+        words += str(secrets.randbelow(900) + 100)  # sometimes a number
+    return words
+
+def roblox_bio(user_id):
+    """Fetch a Roblox user's profile description (bio). Public, no cookie needed."""
+    try:
+        r = requests.get(f"https://users.roblox.com/v1/users/{user_id}", timeout=10)
+        if r.status_code == 200:
+            return r.json().get("description", "") or ""
+    except Exception as ex:
+        print(f"bio fetch err: {ex}", flush=True)
+    return ""
+
+# ---- Open Cloud: create a gamepass automatically ----
+def create_gamepass(display_name, price):
+    """Create a gamepass via Roblox Open Cloud. Returns (gamepass_id, raw_response, error).
+    Beta API — we log the full response so we can adapt the format if needed."""
+    if not ROBLOX_API_KEY:
+        return None, None, "no api key"
+    url = f"https://apis.roblox.com/game-passes/v1/universes/{UNIVERSE_ID}/game-passes"
+    headers = {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"}
+    # best-guess body based on Roblox Open Cloud conventions; we'll adjust from the logged response
+    body = {
+        "displayName": display_name[:50],
+        "price": {"currency": "Robux", "amount": int(price)},
+        "isForSale": True,
+    }
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=20)
+        print(f"🎟️ create_gamepass status={r.status_code} body={r.text[:400]}", flush=True)
+        if r.status_code not in (200, 201):
+            return None, r.text, f"status {r.status_code}"
+        data = r.json()
+        # try common field names for the new gamepass id
+        gpid = (data.get("gamePassId") or data.get("id")
+                or (data.get("gamePass") or {}).get("id")
+                or (data.get("path","").split("/")[-1] if data.get("path") else None))
+        return gpid, data, None
+    except Exception as ex:
+        print(f"create_gamepass err: {ex}", flush=True)
+        return None, None, str(ex)
 
 def roblox_user_id(u):
     try:
@@ -154,14 +208,34 @@ select:focus,input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 <div class="lab">Un-blacklist</div><div class="chips">
 {% for u in unblacklist %}<div class="chip"><div class="cl">{{u.len}}</div><div class="cp">{{u.robux}} R$</div></div>{% endfor %}</div>
 <div class="redeem"><h3>🔑 Claim your key</h3>
-<p>Bought it? Enter your Roblox name — we verify the actual purchase, so only the real buyer gets the key.</p>
-<form method="POST" action="/claim"><label>Which plan?</label>
+{% if step == 1 %}
+<p>Enter your Roblox name and plan. We'll give you a quick code to prove the account is yours — stops anyone stealing your key.</p>
+<form method="POST" action="/start"><label>Which plan?</label>
 <select name="product" required>{% for pid,p in products.items() %}<option value="{{pid}}">{{p.name}} · {{p.len}} — {{p.robux}} R$</option>{% endfor %}</select>
 <label>Your Roblox username</label><input name="username" placeholder="e.g. builderman" required autocomplete="off">
-<button class="go" type="submit">Verify purchase &amp; get key</button></form>
+<button class="go" type="submit">Continue →</button></form>
+{% elif step == 2 %}
+<p>Step 2 — prove it's you. Put this code in your Roblox <b>About / Description</b>, save it, then hit verify:</p>
+<div class="key">{{ code }}</div>
+<div class="steps" style="margin-bottom:14px">Roblox → your profile → ✏️ → paste into "About" → Save. Then click below.</div>
+<form method="POST" action="/claim">
+  <input type="hidden" name="product" value="{{ s_product }}">
+  <input type="hidden" name="uid" value="{{ s_uid }}">
+  <input type="hidden" name="username" value="{{ s_username }}">
+  <button class="go" type="submit">✅ I added it — verify &amp; get key</button>
+</form>
+<form method="POST" action="/newcode" style="margin-top:10px">
+  <input type="hidden" name="product" value="{{ s_product }}">
+  <input type="hidden" name="uid" value="{{ s_uid }}">
+  <input type="hidden" name="username" value="{{ s_username }}">
+  <button class="go" type="submit" style="background:#efe7f5;color:#6b5f83;box-shadow:3px 3px 0 #2a2140">🔄 Give me a different code</button>
+</form>
+{% else %}
+<p>All done! 🎉</p>
+{% endif %}
 {% if result %}<div class="result {{result_class}}">{{result|safe}}
-{% if key %}<span class="key">{{key}}</span><div class="steps">Discord: /activatekey product:{{product_id}} key:{{key}}</div>{% endif %}</div>{% endif %}
-</div><div class="foot">ROBUKS GENERATOR · verified via real Roblox sales · keys single-use</div>
+{% if key %}<span class="key">{{key}}</span><div class="steps">Discord: /activatekey key:{{key}}</div>{% endif %}</div>{% endif %}
+</div><div class="foot">ROBUKS GENERATOR · bio-verified · keys single-use</div>
 </div></body></html>"""
 
 @app.route("/debug")
@@ -207,40 +281,119 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v5-ownership", 200
+    return "shop build=v7-autocreate", 200
+
+@app.route("/testcreate")
+def testcreate():
+    """Test the Open Cloud create-gamepass call. /testcreate?name=Test&price=5"""
+    name = request.args.get("name", "Robuks Test Pass")
+    price = int(request.args.get("price", "5"))
+    gpid, raw, err = create_gamepass(name, price)
+    return {
+        "api_key_present": bool(ROBLOX_API_KEY),
+        "universe_id": UNIVERSE_ID,
+        "created_gamepass_id": gpid,
+        "error": err,
+        "raw_response": raw,
+    }, 200
 
 @app.route("/")
 def home():
-    return render_template_string(PAGE,products=PRODUCTS,unblacklist=UNBLACKLIST,logo=LOGO_URL,result=None)
+    return render_template_string(PAGE,products=PRODUCTS,unblacklist=UNBLACKLIST,logo=LOGO_URL,
+                                  step=1, result=None)
 
-@app.route("/claim",methods=["POST"])
-def claim():
-    product=request.form.get("product","").strip(); username=request.form.get("username","").strip()
-    def show(m,c,key=None,pid=None):
-        return render_template_string(PAGE,products=PRODUCTS,unblacklist=UNBLACKLIST,logo=LOGO_URL,result=m,result_class=c,key=key,product_id=pid)
-    if product not in PRODUCTS: return show("❌ Unknown plan.","err")
-    p=PRODUCTS[product]
-    if not p["gamepass"]: return show("⚠️ This plan's gamepass isn't set up yet.","err")
-    if not ROBLOX_COOKIE: return show("⚠️ Store not configured (no Roblox session).","err")
-    if not username: return show("❌ Type your Roblox username.","err")
-    uid,real=roblox_user_id(username)
-    if not uid: return show(f"❌ Couldn't find '{username}'.","err")
+# STEP 1: user enters username + plan -> we give them a bio code to add
+@app.route("/start", methods=["POST"])
+def start():
+    product = request.form.get("product","").strip()
+    username = request.form.get("username","").strip()
+    def show(**kw):
+        base = dict(products=PRODUCTS, unblacklist=UNBLACKLIST, logo=LOGO_URL, step=1, result=None)
+        base.update(kw); return render_template_string(PAGE, **base)
+    if product not in PRODUCTS: return show(result="❌ Unknown plan.", result_class="err")
+    p = PRODUCTS[product]
+    if not p["gamepass"]: return show(result="⚠️ This plan isn't set up yet.", result_class="err")
+    if not username: return show(result="❌ Type your Roblox username.", result_class="err")
+    uid, real = roblox_user_id(username)
+    if not uid: return show(result=f"❌ Couldn't find '{username}'.", result_class="err")
     try:
-        if _redis("GET",f"claim:{product}:{uid}"): return show("❌ This account already claimed a key for this plan.","err")
+        if _redis("GET", f"claim:{product}:{uid}"):
+            return show(result="❌ This account already claimed a key for this plan.", result_class="err")
     except Exception: pass
-    seller=_authed_id()
-    ok,why=buyer_purchased(seller,uid,p["gamepass"])
-    if not ok:
-        print(f"denied uid={uid} product={product}: {why}",flush=True)
-        return show(f"❌ No recent purchase of <b>{p['name']} · {p['len']}</b> found for <b>{real}</b>. If you just bought it, wait a minute and retry.","err")
-    key=gen_key()
-    entry=json.dumps({"product":product,"used_by":None,"created":int(time.time()),"roblox_id":uid,"roblox_name":real})
+    # make a bio code, store it 15 min tied to this uid+product
+    code = gen_bio_code()
     try:
-        _redis("SET",f"key:{key}",entry); _redis("SET",f"claim:{product}:{uid}",key)
+        _redis("SET", f"biocode:{uid}:{product}", code, "EX", "900")
+    except Exception:
+        pass
+    return render_template_string(PAGE, products=PRODUCTS, unblacklist=UNBLACKLIST, logo=LOGO_URL,
+                                  step=2, code=code, s_product=product, s_username=real, s_uid=uid, result=None)
+
+# STEP 2: user added the code to their bio -> verify bio, then purchase, then key
+@app.route("/claim", methods=["POST"])
+def claim():
+    product = request.form.get("product","").strip()
+    uid = request.form.get("uid","").strip()
+    real = request.form.get("username","").strip()
+    def back2(msg, cls):
+        code = ""
+        try: code = _redis("GET", f"biocode:{uid}:{product}") or ""
+        except Exception: pass
+        return render_template_string(PAGE, products=PRODUCTS, unblacklist=UNBLACKLIST, logo=LOGO_URL,
+                                      step=2, code=code, s_product=product, s_username=real, s_uid=uid,
+                                      result=msg, result_class=cls)
+    def done(msg, cls, key=None, pid=None):
+        return render_template_string(PAGE, products=PRODUCTS, unblacklist=UNBLACKLIST, logo=LOGO_URL,
+                                      step=3, result=msg, result_class=cls, key=key, product_id=pid)
+    if product not in PRODUCTS: return done("❌ Unknown plan.","err")
+    p = PRODUCTS[product]
+
+    # get the expected code
+    try:
+        want = _redis("GET", f"biocode:{uid}:{product}")
+    except Exception:
+        want = None
+    if not want:
+        return done("⌛ Your code expired. Please start again.","err")
+
+    # 1) BIO CHECK — proves they own the Roblox account
+    bio = roblox_bio(uid)
+    if want.lower() not in bio.lower():
+        return back2(f"❌ Couldn't find the code in your bio yet. Make sure you saved "
+                     f"<b>{want}</b> in your Roblox 'About' / description, then try again.", "err")
+
+    # 2) PURCHASE CHECK — they own the gamepass
+    ok, why = buyer_purchased(_authed_id(), uid, p["gamepass"])
+    if not ok:
+        return back2(f"✅ Bio verified! But no purchase of <b>{p['name']} · {p['len']}</b> found yet. "
+                     f"Buy the gamepass on Roblox, then click verify again.", "err")
+
+    # both passed -> issue key
+    key = gen_key()
+    entry = json.dumps({"product":product,"used_by":None,"created":int(time.time()),
+                        "roblox_id":uid,"roblox_name":real})
+    try:
+        _redis("SET", f"key:{key}", entry)
+        _redis("SET", f"claim:{product}:{uid}", key)
+        _redis("DEL", f"biocode:{uid}:{product}")
     except Exception as ex:
-        print("store err",ex,flush=True); return show("⚠️ Couldn't reach the key store.","err")
+        print("store err",ex,flush=True); return done("⚠️ Couldn't reach the key store.","err")
     print(f"KEY ISSUED product={product} roblox={real}({uid}) key={key[:6]}…",flush=True)
-    return show(f"✅ Purchase verified for <b>{real}</b>! Here's your key:","ok",key=key,pid=product)
+    return done(f"✅ Verified &amp; purchase confirmed for <b>{real}</b>! Here's your key:","ok",key=key,pid=product)
+
+# retry with a fresh code
+@app.route("/newcode", methods=["POST"])
+def newcode():
+    product = request.form.get("product","").strip()
+    uid = request.form.get("uid","").strip()
+    real = request.form.get("username","").strip()
+    code = gen_bio_code()
+    try: _redis("SET", f"biocode:{uid}:{product}", code, "EX", "900")
+    except Exception: pass
+    return render_template_string(PAGE, products=PRODUCTS, unblacklist=UNBLACKLIST, logo=LOGO_URL,
+                                  step=2, code=code, s_product=product, s_username=real, s_uid=uid,
+                                  result="🔄 Here's a fresh code — pop it in your bio and verify.",
+                                  result_class="ok")
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.getenv("PORT","8080")))
