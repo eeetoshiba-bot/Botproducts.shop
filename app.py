@@ -54,45 +54,23 @@ def roblox_bio(user_id):
 
 # ---- Open Cloud: create a gamepass automatically ----
 def create_gamepass(display_name, price):
-    """Create a gamepass via Roblox Open Cloud. Tries several body formats and logs each."""
+    """Create a gamepass via Roblox Open Cloud (plain JSON works). Returns (id, raw, error)."""
     if not ROBLOX_API_KEY:
         return None, None, "no api key"
     url = f"https://apis.roblox.com/game-passes/v1/universes/{UNIVERSE_ID}/game-passes"
-    name = display_name[:50]
-    body = {"Name": name, "Description": "Premium pass", "Price": int(price), "IsForSale": True}
-
-    attempts = [
-        # (label, kwargs for requests.post)
-        ("json-plain", {"headers": {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"},
-                         "json": body}),
-        ("json-lowername", {"headers": {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"},
-                         "json": {"name": name, "description": "Premium pass", "price": int(price), "isForSale": True}}),
-        ("multipart-request-json", {"headers": {"x-api-key": ROBLOX_API_KEY},
-                         "files": {"request": (None, json.dumps(body), "application/json")}}),
-        ("multipart-fields", {"headers": {"x-api-key": ROBLOX_API_KEY},
-                         "files": {"Name": (None, name), "Description": (None, "Premium pass"),
-                                   "Price": (None, str(int(price))), "IsForSale": (None, "true")}}),
-        ("form-urlencoded", {"headers": {"x-api-key": ROBLOX_API_KEY,
-                         "Content-Type": "application/x-www-form-urlencoded"},
-                         "data": {"Name": name, "Description": "Premium pass",
-                                  "Price": str(int(price)), "IsForSale": "true"}}),
-    ]
-    last = None
-    for label, kw in attempts:
-        try:
-            r = requests.post(url, timeout=20, **kw)
-            last = r
-            print(f"🎟️ [{label}] status={r.status_code} body={r.text[:300]}", flush=True)
-            if r.status_code in (200, 201):
-                data = r.json()
-                gpid = (data.get("gamePassId") or data.get("id")
-                        or (data.get("gamePass") or {}).get("id")
-                        or (data.get("path","").split("/")[-1] if data.get("path") else None))
-                print(f"🎟️ SUCCESS with format [{label}] gpid={gpid}", flush=True)
-                return gpid, data, None
-        except Exception as ex:
-            print(f"🎟️ [{label}] err: {ex}", flush=True)
-    return None, (last.text if last is not None else None), f"status {last.status_code if last is not None else '?'}"
+    headers = {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"}
+    body = {"Name": display_name[:50], "Description": "Premium pass",
+            "Price": int(price), "IsForSale": True}
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=20)
+        print(f"🎟️ create status={r.status_code} body={r.text[:300]}", flush=True)
+        if r.status_code in (200, 201):
+            data = r.json()
+            return data.get("gamePassId") or data.get("id"), data, None
+        return None, r.text, f"status {r.status_code}"
+    except Exception as ex:
+        print(f"create err: {ex}", flush=True)
+        return None, None, str(ex)
 
 def roblox_user_id(u):
     try:
@@ -294,7 +272,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v10-formats", 200
+    return "shop build=v11-autoflow", 200
 
 @app.route("/testcreate")
 def testcreate():
@@ -376,23 +354,46 @@ def claim():
         return back2(f"❌ Couldn't find the code in your bio yet. Make sure you saved "
                      f"<b>{want}</b> in your Roblox 'About' / description, then try again.", "err")
 
-    # 2) PURCHASE CHECK — they own the gamepass
-    ok, why = buyer_purchased(_authed_id(), uid, p["gamepass"])
-    if not ok:
-        return back2(f"✅ Bio verified! But no purchase of <b>{p['name']} · {p['len']}</b> found yet. "
-                     f"Buy the gamepass on Roblox, then click verify again.", "err")
+    # 2) Get (or create) a UNIQUE gamepass for this user+plan, so renewals work.
+    pass_key = f"pass:{uid}:{product}"
+    try:
+        existing = _redis("GET", pass_key)
+    except Exception:
+        existing = None
 
-    # both passed -> issue key
+    if not existing:
+        label = f"{p['name']} {p['len']} · {real}"[:50]
+        gpid, raw, err = create_gamepass(label, p["robux"])
+        if not gpid:
+            return back2(f"⚠️ Couldn't set up your purchase right now ({err}). Try again in a moment.", "err")
+        try:
+            _redis("SET", pass_key, str(gpid))
+        except Exception:
+            pass
+        return back2(f"✅ Bio verified! Your purchase is ready → "
+                     f"<a href='https://www.roblox.com/game-pass/{gpid}' target='_blank'>"
+                     f"<b>Buy {p['name']} · {p['len']} ({p['robux']} R$)</b></a> "
+                     f"on Roblox, then come back and click verify again.", "ok")
+
+    # 3) they have a pass assigned → check they now OWN it
+    gpid = int(existing)
+    if not owns_gamepass(uid, gpid):
+        return back2(f"✅ Bio verified! Now buy your pass → "
+                     f"<a href='https://www.roblox.com/game-pass/{gpid}' target='_blank'>"
+                     f"<b>Buy {p['name']} · {p['len']} ({p['robux']} R$)</b></a> "
+                     f"then click verify again.", "err")
+
+    # both passed -> issue key. Clear pass mapping so a future renewal makes a NEW pass.
     key = gen_key()
     entry = json.dumps({"product":product,"used_by":None,"created":int(time.time()),
                         "roblox_id":uid,"roblox_name":real})
     try:
         _redis("SET", f"key:{key}", entry)
-        _redis("SET", f"claim:{product}:{uid}", key)
         _redis("DEL", f"biocode:{uid}:{product}")
+        _redis("DEL", pass_key)
     except Exception as ex:
         print("store err",ex,flush=True); return done("⚠️ Couldn't reach the key store.","err")
-    print(f"KEY ISSUED product={product} roblox={real}({uid}) key={key[:6]}…",flush=True)
+    print(f"KEY ISSUED product={product} roblox={real}({uid}) key={key[:6]}… gp={gpid}",flush=True)
     return done(f"✅ Verified &amp; purchase confirmed for <b>{real}</b>! Here's your key:","ok",key=key,pid=product)
 
 # retry with a fresh code
