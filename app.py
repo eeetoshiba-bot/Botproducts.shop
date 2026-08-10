@@ -219,6 +219,15 @@ select:focus,input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 <select name="product" required>{% for pid,p in products.items() %}<option value="{{pid}}">{{p.name}} · {{p.len}} — {{p.robux}} R$</option>{% endfor %}</select>
 <label>Your Roblox username</label><input name="username" placeholder="e.g. builderman" required autocomplete="off">
 <button class="go" type="submit">Continue →</button></form>
+{% elif step == "buy" %}
+<p>✅ Identity verified! Now grab your pass on Roblox, then come back and verify to get your key.</p>
+<a class="go" href="https://www.roblox.com/game-pass/{{ gpid }}" target="_blank" style="display:block;text-decoration:none;text-align:center;background:var(--sun);margin-bottom:12px">🛒 Buy on Roblox</a>
+<form method="POST" action="/claim">
+  <input type="hidden" name="product" value="{{ s_product }}">
+  <input type="hidden" name="uid" value="{{ s_uid }}">
+  <input type="hidden" name="username" value="{{ s_username }}">
+  <button class="go" type="submit">✅ I bought it — verify &amp; get my key</button>
+</form>
 {% elif step == 2 %}
 <p>Step 2 — prove it's you. Put this code in your Roblox <b>About / Description</b>, save it, then hit verify:</p>
 <div class="key">{{ code }}</div>
@@ -286,7 +295,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v17-allformats", 200
+    return "shop build=v18-buybutton", 200
 
 @app.route("/testcreate")
 def testcreate():
@@ -382,18 +391,19 @@ def claim():
             _redis("SET", pass_key, str(gpid))
         except Exception:
             pass
-        return back2(f"✅ Bio verified! Your purchase is ready → "
-                     f"<a href='https://www.roblox.com/game-pass/{gpid}' target='_blank'>"
-                     f"<b>Buy {p['name']} · {p['len']} ({p['robux']} R$)</b></a> "
-                     f"on Roblox, then come back and click verify again.", "ok")
+        # bio done + gamepass ready → go to the BUY stage (separate buy + verify buttons)
+        return render_template_string(PAGE, products=PRODUCTS, unblacklist=UNBLACKLIST, logo=LOGO_URL,
+                                      step="buy", gpid=gpid, s_product=product, s_username=real, s_uid=uid,
+                                      result=None)
 
     # 3) they have a pass assigned → check they now OWN it
     gpid = int(existing)
     if not owns_gamepass(uid, gpid):
-        return back2(f"✅ Bio verified! Now buy your pass → "
-                     f"<a href='https://www.roblox.com/game-pass/{gpid}' target='_blank'>"
-                     f"<b>Buy {p['name']} · {p['len']} ({p['robux']} R$)</b></a> "
-                     f"then click verify again.", "err")
+        # still not owned → show the BUY stage again with a gentle note
+        return render_template_string(PAGE, products=PRODUCTS, unblacklist=UNBLACKLIST, logo=LOGO_URL,
+                                      step="buy", gpid=gpid, s_product=product, s_username=real, s_uid=uid,
+                                      result="❌ You don't own the pass yet — buy it first, then verify.",
+                                      result_class="err")
 
     # both passed -> issue key. Clear pass mapping so a future renewal makes a NEW pass.
     key = gen_key()
