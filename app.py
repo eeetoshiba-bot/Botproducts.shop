@@ -37,8 +37,11 @@ def roblox_user_id(u):
     return None,None
 
 _session=requests.Session()
+def _ensure_cookie():
+    if ROBLOX_COOKIE:
+        _session.cookies.set(".ROBLOSECURITY",ROBLOX_COOKIE,domain=".roblox.com")
 def _headers():
-    _session.cookies.set(".ROBLOSECURITY",ROBLOX_COOKIE,domain=".roblox.com")
+    _ensure_cookie()
     csrf=""
     try:
         r=_session.post("https://auth.roblox.com/v2/logout",timeout=10)
@@ -46,8 +49,10 @@ def _headers():
     except Exception as ex: print("csrf err",ex,flush=True)
     return {"X-CSRF-TOKEN":csrf,"Content-Type":"application/json"}
 def _authed_id():
+    _ensure_cookie()   # <-- set the cookie BEFORE checking who we are
     try:
         r=_session.get("https://users.roblox.com/v1/users/authenticated",timeout=10)
+        print(f"authed check status={r.status_code} body={r.text[:120]}",flush=True)
         if r.status_code==200: return r.json().get("id")
     except Exception as ex: print("authed err",ex,flush=True)
     return None
