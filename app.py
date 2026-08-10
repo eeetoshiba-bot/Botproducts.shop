@@ -57,16 +57,16 @@ def create_gamepass(display_name, price):
     """Create a gamepass via Roblox Open Cloud (plain JSON). Returns (id, raw, error)."""
     if not ROBLOX_API_KEY:
         return None, None, "no api key"
-    # keep the name simple ASCII to avoid content-type/validation issues
-    safe = "".join(c for c in display_name if c.isalnum() or c in " -_").strip()[:45]
-    if not safe:
-        safe = "Premium Pass"
+    # clean ASCII, collapse extra spaces
+    safe = "".join(c for c in display_name if c.isalnum() or c in " -_")
+    safe = " ".join(safe.split())[:45] or "Premium Pass"
     url = f"https://apis.roblox.com/game-passes/v1/universes/{UNIVERSE_ID}/game-passes"
+    payload = json.dumps({"Name": safe, "Description": "Premium pass",
+                          "Price": int(price), "IsForSale": True})
     headers = {"x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json"}
-    body = {"Name": safe, "Description": "Premium pass",
-            "Price": int(price), "IsForSale": True}
     try:
-        r = requests.post(url, headers=headers, json=body, timeout=20)
+        # send pre-serialized JSON via data= with explicit header (most reliable)
+        r = requests.post(url, headers=headers, data=payload, timeout=20)
         print(f"🎟️ create name={safe!r} status={r.status_code} body={r.text[:300]}", flush=True)
         if r.status_code in (200, 201):
             data = r.json()
@@ -276,7 +276,7 @@ def debugtx():
 
 @app.route("/version")
 def version():
-    return "shop build=v14-testprices", 200
+    return "shop build=v15-jsondata", 200
 
 @app.route("/testcreate")
 def testcreate():
