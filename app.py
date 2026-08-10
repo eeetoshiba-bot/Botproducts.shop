@@ -9,7 +9,7 @@ app = Flask(__name__)
 REDIS_URL    = os.getenv("UPSTASH_REDIS_REST_URL", "")
 REDIS_TOKEN  = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY", "")
-UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "3842120926")
+UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "34574007")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 OWNER_NAME   = "kiwi_brown_dog"
 
