@@ -185,6 +185,10 @@ def debugtx():
             out["sales_error"] = str(ex)
     return out, 200
 
+@app.route("/version")
+def version():
+    return "shop build=v3-cookiefix", 200
+
 @app.route("/")
 def home():
     return render_template_string(PAGE,products=PRODUCTS,unblacklist=UNBLACKLIST,logo=LOGO_URL,result=None)
