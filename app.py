@@ -23,8 +23,12 @@ PRODUCTS = {
 }
 # Seller Deals — manual fulfilment (DM owner with the key)
 SELLER_DEALS = {
- "nitro1mo": {"pid":"s1","name":"Discord Nitro","len":"1 Month Basic","robux":1000,"tone":"grape",
-              "note":"DM " + OWNER_NAME + " with your key to claim"},
+ "nitro1mo":   {"pid":"s1","name":"Discord Nitro","len":"1 Month Basic","robux":1000,"tone":"grape",
+                "note":"DM " + OWNER_NAME + " with your key to claim"},
+ "distro900k": {"pid":"s2","name":"DistroKid Upload","len":"Under 900k views","robux":50,"tone":"mint",
+                "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
+ "distro9m":   {"pid":"s3","name":"DistroKid Upload","len":"Under 9M views","robux":200,"tone":"sky",
+                "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
@@ -247,7 +251,7 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v25-testcreate", 200
+def version(): return "shop build=v26-distrokid", 200
 
 @app.route("/testcreate")
 def testcreate():
