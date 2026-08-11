@@ -23,7 +23,7 @@ PRODUCTS = {
 }
 # Seller Deals — manual fulfilment (DM owner with the key)
 SELLER_DEALS = {
- "nitro1mo":   {"pid":"s1","name":"Discord Nitro","len":"1 Month Basic","robux":1000,"tone":"grape",
+ "nitro1mo":   {"pid":"s1","name":"Discord Nitro","len":"1 Month Basic","robux":500,"tone":"grape",
                 "note":"DM " + OWNER_NAME + " with your key to claim"},
  "distro900k": {"pid":"s2","name":"DistroKid Upload","len":"Under 900k views","robux":50,"tone":"mint",
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
@@ -251,7 +251,7 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v26-distrokid", 200
+def version(): return "shop build=v27-nitro500", 200
 
 @app.route("/testcreate")
 def testcreate():
