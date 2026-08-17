@@ -30,7 +30,7 @@ SELLER_DEALS = {
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
  "distro9m":   {"pid":"s3","name":"DistroKid Upload","len":"Under 9M views","robux":200,"tone":"sky",
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
-  "robloxscripting":   {"pid":"s4","name":"Roblox exploits script maker","len":"Detail/Tier","robux":100,"tone":"flame",
+  "robloxscripting":   {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame",
                 "note":"DM " + ULTRA109 + " with your key to claim"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
