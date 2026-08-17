@@ -12,7 +12,6 @@ ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY", "")
 UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "34574007")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 OWNER_NAME   = "kiwi_brown_dog"
-ULTRA_109   = "ultra109.yeh"
 
 # Bot Premium — auto-activated with /activatekey. 'pid' = stock product id.
 PRODUCTS = {
@@ -31,7 +30,7 @@ SELLER_DEALS = {
  "distro9m":   {"pid":"s3","name":"DistroKid Upload","len":"Under 9M views","robux":200,"tone":"sky",
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
   "robloxscripting":   {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame",
-                "note":"DM " + ULTRA109 + " with your key to claim"},
+                "note":"DM ultra109.yeh with your key to claim"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
