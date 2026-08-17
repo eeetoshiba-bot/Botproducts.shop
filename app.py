@@ -12,7 +12,7 @@ ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY", "")
 UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "34574007")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 OWNER_NAME   = "kiwi_brown_dog"
-ULTRA109 = "ultra109.yeh"
+ULTRA_109   = "ultra109.yeh"
 
 # Bot Premium — auto-activated with /activatekey. 'pid' = stock product id.
 PRODUCTS = {
