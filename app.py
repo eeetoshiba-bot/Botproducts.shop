@@ -13,10 +13,7 @@ UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "34574007")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 OWNER_NAME   = "kiwi_brown_dog"
 PAYPAL_ME    = os.getenv("PAYPAL_ME", "RalseiPlush")   # paypal.me/RalseiPlush (env can override)
-# ---- PayPal email-reading detection (no Business API needed) ----
-PP_EMAIL     = os.getenv("PP_EMAIL", "")        # the Gmail that receives PayPal receipts
-PP_EMAIL_PASS= os.getenv("PP_EMAIL_PASS", "")   # Gmail App Password (not your normal password)
-PP_IMAP_HOST = os.getenv("PP_IMAP_HOST", "imap.gmail.com")
+# ---- PayPal: manual fulfilment (buyer DMs owner a screenshot) ----
 # rough Robux -> USD for showing a PayPal price (Robux ÷ this = $). ~100 R$ ≈ $1 by default.
 RBX_PER_USD  = int(os.getenv("RBX_PER_USD", "200"))   # 200 R$ = $1  (so 100 R$ = $0.50)
 
@@ -78,47 +75,6 @@ def roblox_bio(uid):
     except Exception as ex: print("bio err",ex,flush=True)
     return ""
 
-def check_paypal_email(expected_usd, note_contains):
-    """Scan the PayPal inbox for a recent payment matching amount + a note (e.g. username).
-    Returns (found, reason). Reads PayPal receipt emails — no Business API needed."""
-    if not PP_EMAIL or not PP_EMAIL_PASS:
-        return False, "email not configured"
-    import imaplib, email as emaillib
-    from email.header import decode_header
-    try:
-        M = imaplib.IMAP4_SSL(PP_IMAP_HOST)
-        M.login(PP_EMAIL, PP_EMAIL_PASS)
-        M.select("INBOX")
-        typ, data = M.search(None, '(FROM "paypal" UNSEEN)')
-        ids = data[0].split()
-        found = False
-        for num in ids[-25:][::-1]:
-            typ, msg_data = M.fetch(num, "(RFC822)")
-            msg = emaillib.message_from_bytes(msg_data[0][1])
-            subj = ""
-            for part, enc in decode_header(msg.get("Subject", "")):
-                subj += part.decode(enc or "utf-8", "ignore") if isinstance(part, bytes) else str(part)
-            body = ""
-            if msg.is_multipart():
-                for p in msg.walk():
-                    if p.get_content_type() in ("text/plain", "text/html"):
-                        try: body += p.get_payload(decode=True).decode("utf-8", "ignore")
-                        except Exception: pass
-            else:
-                try: body = msg.get_payload(decode=True).decode("utf-8", "ignore")
-                except Exception: pass
-            blob = (subj + " " + body).lower()
-            amt = f"{expected_usd:.2f}"
-            got_money = any(x in blob for x in ("you received", "you've got money", "sent you", "payment received"))
-            if got_money and amt in blob and note_contains.lower() in blob:
-                found = True
-                M.store(num, '+FLAGS', '\\Seen')
-                break
-        M.logout()
-        return found, ("match" if found else "no matching email yet")
-    except Exception as ex:
-        print(f"paypal email err: {ex}", flush=True)
-        return False, str(ex)
 def roblox_user_id(u):
     try:
         r=requests.post("https://users.roblox.com/v1/usernames/users",
@@ -254,8 +210,17 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 {% if paypal %}
 <div style="margin-top:16px;padding:14px;border:3px dashed var(--edge);border-radius:14px;background:#f0f6ff">
   <b>💳 Prefer PayPal?</b>
-  <p style="margin:6px 0 10px">Pay <b>${{ p.usd }}</b> to <b>paypal.me/{{ paypal }}</b>, then DM <b>{{ owner }}</b> on Discord with your payment screenshot to get your {{p.name}}.</p>
+  <p style="margin:6px 0 10px">1. Pay <b>${{ p.usd }}</b> to <b>paypal.me/{{ paypal }}</b>.<br>
+     2. <b>Screenshot</b> your payment receipt.<br>
+     3. Tap the button below, then <b>DM {{ owner }}</b> on Discord with that screenshot.</p>
   <a class="go" href="https://paypal.me/{{ paypal }}/{{ p.usd }}" target="_blank" style="background:#ffcb3a">💳 Pay ${{ p.usd }} with PayPal</a>
+  <form method="POST" action="/ipaid" style="margin-top:10px">
+    <input type="hidden" name="tab" value="{{tab}}"><input type="hidden" name="product" value="{{product}}">
+    <input type="hidden" name="method" value="PayPal">
+    <label>Your Discord username (so {{ owner }} knows who paid)</label>
+    <input name="username" placeholder="e.g. coolkid#0001" required autocomplete="off">
+    <button class="go" type="submit" style="background:#33e6a6">✅ I paid with PayPal</button>
+  </form>
 </div>
 {% endif %}
 </div>
@@ -315,9 +280,6 @@ def render(**kw):
     if "p" in kw and isinstance(kw["p"], dict):
         kw["p"] = dict(kw["p"])
         kw["p"]["usd"] = round(kw["p"].get("robux", 0) / RBX_PER_USD, 2)
-    # a short PayPal note-code so we can match their payment email
-    if kw.get("step") == "name" and "ppcode" not in kw:
-        kw["ppcode"] = "PP" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
@@ -349,55 +311,6 @@ def start():
     if get_stock(cat[product]["pid"]) <= 0:
         return render(tab=tab,step=1,items=cat,result="❌ That product is out of stock.",result_class="err")
     return render(tab=tab,step="name",items=cat,product=product,p=cat[product])
-
-@app.route("/checkpaypal",methods=["POST"])
-def checkpaypal():
-    """Buyer paid via PayPal with their code in the note → read inbox → auto-issue key."""
-    tab=request.form.get("tab","premium"); product=request.form.get("product","")
-    ppcode=request.form.get("ppcode","").strip()
-    username=request.form.get("username","").strip()
-    cat=catalog(tab)
-    if product not in cat: return render(tab=tab,step=1,items=cat,result="❌ Unknown plan.",result_class="err")
-    p=cat[product]
-    usd = round(p["robux"]/RBX_PER_USD, 2)
-    if not ppcode:
-        return render(tab=tab,step="name",items=cat,product=product,p=p,
-                      result="❌ Missing your payment code — go back and try again.",result_class="err")
-    # already used this code? (prevents double-claims)
-    try:
-        if _redis("GET", f"ppused:{ppcode}"):
-            return render(tab=tab,step="name",items=cat,product=product,p=p,
-                          result="❌ This payment code was already used.",result_class="err")
-    except Exception: pass
-    # read the inbox for a matching PayPal receipt
-    ok, why = check_paypal_email(usd, ppcode)
-    if not ok:
-        return render(tab=tab,step="name",items=cat,product=product,p=p,
-                      result=f"⏳ No matching PayPal payment found yet ({why}). "
-                             f"Make sure you sent <b>${usd}</b> with code <b>{ppcode}</b> in the note, "
-                             f"then wait ~30s and tap verify again.",result_class="err")
-    # payment found → issue key
-    key=gen_key()
-    entry=json.dumps({"kind":tab,"product":product,"product_name":f"{p['name']} {p['len']}",
-                      "used_by":None,"created":int(time.time()),"roblox_id":None,
-                      "roblox_name":username or "PayPal buyer","paid":"paypal"})
-    try:
-        _redis("SET",f"key:{key}",entry)
-        _redis("SET",f"ppused:{ppcode}","1")
-        dec_stock(p["pid"])
-        # notify owner of the paypal sale
-        _redis("RPUSH","sellerorders",json.dumps({
-            "kind":tab,"key":key,"product":f"{p['name']} {p['len']}",
-            "roblox":username or "PayPal buyer","ts":int(time.time()),"paid":"PayPal"}))
-    except Exception as ex:
-        print("pp store err",ex,flush=True)
-        return render(tab=tab,step="done",result="⚠️ Payment found but key store failed — DM the owner.",result_class="err")
-    print(f"💳 PAYPAL KEY ISSUED product={product} code={ppcode} key={key[:6]}…",flush=True)
-    if tab=="seller":
-        msg=f"✅ PayPal payment confirmed! Here's your <b>{p['name']} · {p['len']}</b> key:"
-    else:
-        msg=f"✅ PayPal payment confirmed! Here's your key:"
-    return render(tab=tab,step="done",result=msg,result_class="ok",key=key,pname=f"{p['name']} {p['len']}")
 
 @app.route("/ipaid",methods=["POST"])
 def ipaid():
