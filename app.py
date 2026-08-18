@@ -12,6 +12,9 @@ ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY", "")
 UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "34574007")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 OWNER_NAME   = "kiwi_brown_dog"
+PAYPAL_ME    = os.getenv("PAYPAL_ME", "RalseiPlush")   # paypal.me/RalseiPlush (env can override)
+# rough Robux -> USD for showing a PayPal price (Robux ÷ this = $). ~100 R$ ≈ $1 by default.
+RBX_PER_USD  = int(os.getenv("RBX_PER_USD", "200"))   # 200 R$ = $1  (so 100 R$ = $0.50)
 
 # Bot Premium — auto-activated with /activatekey. 'pid' = stock product id.
 PRODUCTS = {
@@ -29,8 +32,8 @@ SELLER_DEALS = {
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
  "distro9m":   {"pid":"s3","name":"DistroKid Upload","len":"Under 9M views","robux":200,"tone":"sky",
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
-  "robloxscripting":   {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame",
-                "note":"DM ultra109.yeh with your key to claim"},
+ "robloxscripting": {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame", "note":"DM ultra109.yeh with your key to claim"},
+ 
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
@@ -196,12 +199,20 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 {% elif step == 'name' %}
 <div class="redeem"><h3>🔑 {{p.name}} · {{p.len}}</h3>
 <div class="chosen">Selected: <b>{{p.name}} · {{p.len}}</b> — {{p.robux}} R$</div>
-<p>Enter your Roblox username so we can verify it's really you.</p>
+<p>Enter your Roblox username so we can verify it's really you (Robux payment).</p>
 <form method="POST" action="/getcode">
   <input type="hidden" name="tab" value="{{tab}}"><input type="hidden" name="product" value="{{product}}">
   <label>Your Roblox username</label><input name="username" placeholder="e.g. builderman" required autocomplete="off">
-  <button class="go" type="submit">Continue →</button>
-</form></div>
+  <button class="go" type="submit">Continue with Robux →</button>
+</form>
+{% if paypal %}
+<div style="margin-top:16px;padding:14px;border:3px dashed var(--edge);border-radius:14px;background:#f0f6ff">
+  <b>💳 Prefer PayPal?</b>
+  <p style="margin:6px 0 10px">Pay <b>${{ p.usd }}</b> to <b>paypal.me/{{ paypal }}</b>, then DM <b>{{ owner }}</b> on Discord with your payment screenshot to get your {{p.name}}.</p>
+  <a class="go" href="https://paypal.me/{{ paypal }}/{{ p.usd }}" target="_blank" style="background:#ffcb3a">💳 Pay ${{ p.usd }} with PayPal</a>
+</div>
+{% endif %}
+</div>
 
 {% elif step == 2 %}
 <div class="redeem"><h3>🔑 Prove it's you</h3>
@@ -243,17 +254,21 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 
 def render(**kw):
     base=dict(products=PRODUCTS,unblacklist=UNBLACKLIST,logo=LOGO_URL,tones=TONES,owner=OWNER_NAME,
-              tab="premium",step=1,items=PRODUCTS,result=None,key=None,stock={})
+              tab="premium",step=1,items=PRODUCTS,result=None,key=None,stock={},paypal=PAYPAL_ME)
     # compute stock for whichever catalog is shown
     items = kw.get("items", base["items"])
     try:
         base["stock"] = {pid: get_stock(p["pid"]) for pid, p in items.items()}
     except Exception:
         base["stock"] = {}
+    # add a USD price to the selected product for PayPal display
+    if "p" in kw and isinstance(kw["p"], dict):
+        kw["p"] = dict(kw["p"])
+        kw["p"]["usd"] = round(kw["p"].get("robux", 0) / RBX_PER_USD, 2)
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v27-nitro500", 200
+def version(): return "shop build=v29-usd50", 200
 
 @app.route("/testcreate")
 def testcreate():
