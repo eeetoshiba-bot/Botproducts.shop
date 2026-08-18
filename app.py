@@ -214,13 +214,6 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
      2. <b>Screenshot</b> your payment receipt.<br>
      3. Tap the button below, then <b>DM {{ owner }}</b> on Discord with that screenshot.</p>
   <a class="go" href="https://paypal.me/{{ paypal }}/{{ p.usd }}" target="_blank" style="background:#ffcb3a">💳 Pay ${{ p.usd }} with PayPal</a>
-  <form method="POST" action="/ipaid" style="margin-top:10px">
-    <input type="hidden" name="tab" value="{{tab}}"><input type="hidden" name="product" value="{{product}}">
-    <input type="hidden" name="method" value="PayPal">
-    <label>Your Discord username (so {{ owner }} knows who paid)</label>
-    <input name="username" placeholder="e.g. coolkid#0001" required autocomplete="off">
-    <button class="go" type="submit" style="background:#33e6a6">✅ I paid with PayPal</button>
-  </form>
 </div>
 {% endif %}
 </div>
