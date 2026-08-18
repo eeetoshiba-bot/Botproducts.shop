@@ -243,35 +243,22 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 
 {% elif step == 'name' %}
 <div class="redeem"><h3>🔑 {{p.name}} · {{p.len}}</h3>
-<div class="chosen">Selected: <b>{{p.name}} · {{p.len}}</b> — {{p.robux}} R$ / ${{ p.usd }}</div>
-<p>Pick how you want to pay, complete the payment, then enter your name and tap <b>I paid</b>. {{ owner }} will verify and deliver your product.</p>
-
-<div style="display:flex;gap:10px;margin-bottom:12px">
-  <a class="go" href="https://www.roblox.com/game-pass/{{ robuxpass or '0' }}" target="_blank" style="flex:1;background:linear-gradient(90deg,var(--mint),var(--sky))">🎮 Pay {{p.robux}} R$</a>
-</div>
-<form method="POST" action="/ipaid">
+<div class="chosen">Selected: <b>{{p.name}} · {{p.len}}</b> — {{p.robux}} R$</div>
+<p>Enter your Roblox username so we can verify it's really you (Robux payment — instant key).</p>
+<form method="POST" action="/getcode">
   <input type="hidden" name="tab" value="{{tab}}"><input type="hidden" name="product" value="{{product}}">
-  <label>Your Roblox username (or Discord)</label>
-  <input name="username" placeholder="who are you?" required autocomplete="off">
-  <button class="go" type="submit">✅ I paid with Robux — notify {{ owner }}</button>
+  <label>Your Roblox username</label><input name="username" placeholder="e.g. builderman" required autocomplete="off">
+  <button class="go" type="submit">Continue with Robux →</button>
 </form>
 
 {% if paypal %}
 <div style="margin-top:16px;padding:14px;border:3px dashed var(--edge);border-radius:14px;background:#f0f6ff">
-  <b>💳 Pay with PayPal (automatic!)</b>
-  <p style="margin:6px 0 10px">1. Send <b>${{ p.usd }}</b> to <b>paypal.me/{{ paypal }}</b><br>
-  2. ⚠️ In the payment <b>note</b>, write: <b style="font-family:'DM Mono'">{{ ppcode }}</b><br>
-  3. Come back &amp; tap verify — key is instant!</p>
-  <a class="go" href="https://paypal.me/{{ paypal }}/{{ p.usd }}" target="_blank" style="background:#ffcb3a;margin-bottom:10px">💳 Pay ${{ p.usd }}</a>
-  <form method="POST" action="/checkpaypal">
-    <input type="hidden" name="tab" value="{{tab}}"><input type="hidden" name="product" value="{{product}}">
-    <input type="hidden" name="ppcode" value="{{ ppcode }}">
-    <input name="username" placeholder="your Roblox/Discord name" required autocomplete="off"
-      style="margin-bottom:10px">
-    <button class="go" type="submit" style="background:linear-gradient(90deg,var(--mint),var(--sky))">✅ I paid — check &amp; get my key</button>
-  </form>
+  <b>💳 Prefer PayPal?</b>
+  <p style="margin:6px 0 10px">Pay <b>${{ p.usd }}</b> to <b>paypal.me/{{ paypal }}</b>, then DM <b>{{ owner }}</b> on Discord with your payment screenshot to get your {{p.name}}.</p>
+  <a class="go" href="https://paypal.me/{{ paypal }}/{{ p.usd }}" target="_blank" style="background:#ffcb3a">💳 Pay ${{ p.usd }} with PayPal</a>
 </div>
 {% endif %}
+</div>
 
 {% elif step == 'paid' %}
 <div class="redeem"><h3>✅ Thanks!</h3>
@@ -334,7 +321,7 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v31-ppauto", 200
+def version(): return "shop build=v32-restored", 200
 
 @app.route("/testcreate")
 def testcreate():
