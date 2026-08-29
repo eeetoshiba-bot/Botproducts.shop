@@ -265,13 +265,26 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 @media(max-width:480px){.plans{grid-template-columns:1fr}.title{font-size:25px}}
 </style></head><body><div class="wrap">
 <div class="top"><div class="logo">{% if logo %}<img src="{{logo}}" alt="logo">{% else %}🎮{% endif %}</div>
-<div class="title">Robuks Generator<small>secure keys · auto-verified · instant delivery ✨</small></div></div>
+<div class="title">Robuks Generator<small>secure keys · auto-verified · instant delivery ✨</small></div>
+<a href="{% if user %}/account{% else %}/login{% endif %}" style="margin-left:auto;padding:10px 16px;border:3px solid #2a2140;border-radius:14px;background:{% if user %}#e3fff4{% else %}#ffcb3a{% endif %};color:#2a2140;font-family:'Baloo 2';font-weight:800;font-size:14px;text-decoration:none;box-shadow:3px 3px 0 #2a2140;white-space:nowrap">
+{% if user %}👤 {{ user.username }} · ${{ '%.2f'|format(user.balance) }}{% else %}🔐 Login{% endif %}</a></div>
 
 <div class="tabs">
   <a class="tab {% if tab=='premium' %}active{% endif %}" href="/?tab=premium">💎 Bot Premium</a>
   <a class="tab {% if tab=='seller' %}active{% endif %}" href="/?tab=seller">🛍️ Seller Deals</a>
   <a class="tab" href="https://discord.gg/JS7AQrwbKS" target="_blank">💬 Join Discord</a>
 </div>
+
+{% if user %}
+<div style="margin-bottom:22px;padding:14px 20px;border:3px solid #2a2140;border-radius:16px;
+  background:linear-gradient(90deg,#33e6a6,#3fb9ff);box-shadow:4px 4px 0 #2a2140;display:flex;
+  align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+  <span style="font-family:'Baloo 2';font-weight:800;font-size:17px;color:#2a2140">
+    👋 Hi {{ user.username }}!</span>
+  <span style="font-family:'Baloo 2';font-weight:800;font-size:19px;color:#2a2140">
+    💰 Balance: ${{ '%.2f'|format(user.balance) }}</span>
+</div>
+{% endif %}
 
 {% if step == 1 %}
 <div class="lab">{% if tab=='premium' %}Premium plans{% else %}Seller deals{% endif %}</div>
@@ -358,7 +371,8 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 
 def render(**kw):
     base=dict(products=PRODUCTS,unblacklist=UNBLACKLIST,logo=LOGO_URL,tones=TONES,owner=OWNER_NAME,
-              tab="premium",step=1,items=PRODUCTS,result=None,key=None,stock={},paypal=PAYPAL_ME)
+              tab="premium",step=1,items=PRODUCTS,result=None,key=None,stock={},paypal=PAYPAL_ME,
+              user=current_user())
     # compute stock for whichever catalog is shown
     items = kw.get("items", base["items"])
     try:
@@ -375,7 +389,7 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v33-login", 200
+def version(): return "shop build=v36-bonus", 200
 
 LOGIN_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Login — Robuks</title>
@@ -461,21 +475,35 @@ def setusername():
             <form method="POST" action="/setusername"><label>Username</label>
             <input name="username" required><button class="go">Create →</button></form>""")
     except Exception: pass
-    acct = {"email": email, "username": uname, "balance": 0.0, "created": int(time.time())}
+    acct = {"email": email, "username": uname, "balance": 0.10, "created": int(time.time()),
+            "signup_bonus": True}
     save_account(acct)
     session.pop("pending_email", None)
     session["email"] = email
-    return redirect("/account")
+    return redirect("/account?welcome=1")
 
 @app.route("/account")
 def account():
     acct = current_user()
     if not acct: return redirect("/login")
+    bal = acct.get('balance', 0)
+    welcome = ""
+    if request.args.get("welcome"):
+        welcome = """<div class="msg ok" style="text-align:center">
+        🎉 Welcome! We added a <b>$0.10</b> signup bonus to your balance!</div>"""
     inner = f"""<h2>👤 {acct['username']}</h2>
     <p>{acct['email']}</p>
-    <div class='msg ok'>💰 Balance: <b>${acct.get('balance',0):.2f}</b></div>
-    <p style='margin-top:14px'>Use your balance to buy products in the <a href='/'>shop</a>.</p>
-    <p><a href='/logout'>Log out</a></p>"""
+    {welcome}
+    <div style="margin:16px 0;padding:22px;border:3px solid #2a2140;border-radius:18px;
+      background:linear-gradient(135deg,#33e6a6,#3fb9ff);box-shadow:5px 5px 0 #2a2140;text-align:center">
+      <div style="font-size:13px;font-weight:700;color:#2a2140;opacity:.7">YOUR BALANCE</div>
+      <div style="font-family:'Baloo 2';font-weight:800;font-size:42px;color:#2a2140;line-height:1.1">${bal:.2f}</div>
+    </div>
+    <p style="text-align:center">Use your balance to buy products in the shop! 🛒</p>
+    <a class="go" href="/" style="text-decoration:none;display:block;text-align:center">🛒 Go Shopping</a>
+    <p style="margin-top:14px;text-align:center;font-size:13px">
+      Need to top up? DM <b>{OWNER_NAME}</b> on Discord.<br>
+      <a href='/logout'>Log out</a></p>"""
     return render_template_string(LOGIN_PAGE, inner=inner)
 
 @app.route("/logout")
