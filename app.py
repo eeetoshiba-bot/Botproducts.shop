@@ -7,9 +7,11 @@ from flask import Flask, request, render_template_string, session, redirect
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))  # for login sessions
-# ---- Email sending (Brevo API — works on Render, unlike SMTP) ----
-BREVO_KEY    = os.getenv("BREVO_KEY", "")         # Brevo API key
-BREVO_SENDER = os.getenv("BREVO_SENDER", "")      # a verified sender email in Brevo
+# ---- Email sending (works on Render via HTTPS APIs) ----
+RESEND_KEY   = os.getenv("RESEND_KEY", "")        # Resend API key (starts re_)
+RESEND_SENDER= os.getenv("RESEND_SENDER", "onboarding@resend.dev")  # Resend test sender works instantly
+BREVO_KEY    = os.getenv("BREVO_KEY", "")         # Brevo API key (backup)
+BREVO_SENDER = os.getenv("BREVO_SENDER", "")
 # legacy SMTP (kept as fallback if you ever move hosts)
 SMTP_EMAIL   = os.getenv("SMTP_EMAIL", "")
 SMTP_PASS    = os.getenv("SMTP_PASS", "")
@@ -36,8 +38,6 @@ PRODUCTS = {
  "premiummonth":    {"pid":"p3","name":"Premium","len":"1 month","robux":300,"tone":"grape"},
  "premiumunlimited":{"pid":"p4","name":"Premium","len":"Unlimited","robux":550,"tone":"sun","note":"or 1 server boost"},
  "premiumimmune":   {"pid":"p5","name":"Premium + Immune","len":"Unlimited","robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
- "robloxscripting": {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame", "note":"DM ultra109.yeh with your key to claim"},
- "game thumbnail": {"pid":"s5","name":"have the user create your art for your roblox game thumbnail","len":"Game thumbnail","robux":100,"tone":"flame", "note":"DM absolute_cyn.ema with your key to claim"},
 }
 # Seller Deals — manual fulfilment (DM owner with the key)
 SELLER_DEALS = {
@@ -47,6 +47,8 @@ SELLER_DEALS = {
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
  "distro9m":   {"pid":"s3","name":"DistroKid Upload","len":"Under 9M views","robux":200,"tone":"sky",
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
+ "robloxscripting": {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame", "note":"DM ultra109.yeh with your key to claim"},
+ "game thumbnail": {"pid":"s5","name":"have the user create your art for your roblox game thumbnail","len":"Game thumbnail","robux":100,"tone":"flame", "note":"DM absolute_cyn.ema with your key to claim"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
@@ -82,8 +84,21 @@ def gen_key(n=20): return "".join(secrets.choice(KEY_CHARS) for _ in range(n))
 #    logincode:{email} -> 6-digit code (EX 600)
 # ================================================================
 def send_email(to_addr, subject, body):
-    """Send email via Brevo API (works on Render). Falls back to SMTP if configured."""
-    # --- Brevo API (HTTPS, not blocked by Render) ---
+    """Send email via Resend (easiest on Render), then Brevo, then SMTP."""
+    # --- Resend API (works instantly with onboarding@resend.dev sender) ---
+    if RESEND_KEY:
+        try:
+            r = requests.post("https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {RESEND_KEY}", "Content-Type": "application/json"},
+                json={"from": RESEND_SENDER, "to": [to_addr], "subject": subject, "text": body},
+                timeout=15)
+            if r.status_code in (200, 201, 202):
+                return True, None
+            print(f"resend err {r.status_code}: {r.text[:250]}", flush=True)
+            # fall through to try other providers
+        except Exception as ex:
+            print(f"resend exc: {ex}", flush=True)
+    # --- Brevo API ---
     if BREVO_KEY and BREVO_SENDER:
         try:
             r = requests.post("https://api.brevo.com/v3/smtp/email",
@@ -406,8 +421,23 @@ def render(**kw):
         kw["ppcode"] = "PP" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
     base.update(kw); return render_template_string(PAGE,**base)
 
+@app.route("/testemail")
+def testemail():
+    """Debug: try sending a test email. /testemail?to=you@gmail.com"""
+    to = request.args.get("to", "")
+    if not to:
+        return {"error": "add ?to=youremail@gmail.com"}, 200
+    out = {"resend_key_present": bool(RESEND_KEY),
+           "resend_sender": RESEND_SENDER,
+           "brevo_key_present": bool(BREVO_KEY),
+           "brevo_sender": BREVO_SENDER}
+    ok, err = send_email(to, "Test", "Test email from your shop! If you got this, email works. 🎉")
+    out["sent_ok"] = ok
+    out["error"] = err
+    return out, 200
+
 @app.route("/version")
-def version(): return "shop build=v37-brevo", 200
+def version(): return "shop build=v39-resend", 200
 
 LOGIN_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Login — Robuks</title>
