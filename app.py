@@ -7,6 +7,10 @@ from flask import Flask, request, render_template_string, session, redirect
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))  # for login sessions
+app.permanent_session_lifetime = datetime.timedelta(days=30)  # stay logged in 30 days
+@app.before_request
+def _make_session_permanent():
+    session.permanent = True
 # ---- Email sending (works on Render via HTTPS APIs) ----
 RESEND_KEY   = os.getenv("RESEND_KEY", "")        # Resend API key (starts re_)
 RESEND_SENDER= os.getenv("RESEND_SENDER", "onboarding@resend.dev")  # Resend test sender works instantly
@@ -358,6 +362,25 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
   <a class="go" href="https://paypal.me/{{ paypal }}/{{ p.usd }}" target="_blank" style="background:#ffcb3a">💳 Pay ${{ p.usd }} with PayPal</a>
 </div>
 {% endif %}
+
+{% if user %}
+<div style="margin-top:16px;padding:14px;border:3px solid var(--edge);border-radius:14px;background:#e3fff4">
+  <b>💰 Pay with your balance</b>
+  <p style="margin:6px 0 10px">Your balance: <b>${{ '%.2f'|format(user.balance) }}</b> · Price: <b>${{ p.usd }}</b></p>
+  {% if user.balance >= p.usd %}
+  <form method="POST" action="/buybalance">
+    <input type="hidden" name="tab" value="{{tab}}"><input type="hidden" name="product" value="{{product}}">
+    <button class="go" type="submit" style="background:linear-gradient(90deg,#33e6a6,#3fb9ff)">💰 Buy with balance (${{ p.usd }})</button>
+  </form>
+  {% else %}
+  <p style="color:#c0392b;font-weight:600">Not enough balance. DM {{ owner }} to top up!</p>
+  {% endif %}
+</div>
+{% else %}
+<div style="margin-top:16px;padding:12px;border:3px dashed var(--edge);border-radius:14px;background:#fff8ec;text-align:center">
+  <a href="/login" style="font-weight:700;color:var(--grape)">🔐 Log in</a> to pay with account balance!
+</div>
+{% endif %}
 </div>
 
 {% elif step == 'paid' %}
@@ -437,7 +460,7 @@ def testemail():
     return out, 200
 
 @app.route("/version")
-def version(): return "shop build=v40-codefix", 200
+def version(): return "shop build=v41-balancebuy", 200
 
 LOGIN_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Login — Robuks</title>
@@ -660,6 +683,43 @@ def ipaid():
                          f"<b>{p['name']} · {p['len']}</b> via <b>{method}</b>.<br><br>"
                          f"⏳ Please also <b>DM {OWNER_NAME}</b> on Discord with your payment proof "
                          f"so they can verify and hand over your product. Thank you! 💛")
+
+@app.route("/buybalance", methods=["POST"])
+def buybalance():
+    acct = current_user()
+    if not acct: return redirect("/login")
+    tab=request.form.get("tab","premium"); product=request.form.get("product","")
+    cat=catalog(tab)
+    if product not in cat:
+        return render(tab=tab,step=1,items=cat,result="❌ Unknown plan.",result_class="err")
+    p=cat[product]
+    usd = round(p["robux"]/RBX_PER_USD, 2)
+    # check balance
+    if float(acct.get("balance",0)) < usd:
+        return render(tab=tab,step=1,items=cat,result="❌ Not enough balance.",result_class="err")
+    # check stock
+    if get_stock(p["pid"]) <= 0:
+        return render(tab=tab,step=1,items=cat,result="❌ Out of stock.",result_class="err")
+    # deduct + issue key
+    acct["balance"] = round(float(acct["balance"]) - usd, 2)
+    save_account(acct)
+    key=gen_key()
+    entry=json.dumps({"kind":tab,"product":product,"product_name":f"{p['name']} {p['len']}",
+                      "used_by":None,"created":int(time.time()),"roblox_id":None,
+                      "roblox_name":acct["username"],"paid":"balance"})
+    try:
+        _redis("SET",f"key:{key}",entry)
+        dec_stock(p["pid"])
+        _redis("RPUSH","sellerorders",json.dumps({
+            "kind":tab,"key":key,"product":f"{p['name']} {p['len']}",
+            "roblox":acct["username"],"ts":int(time.time()),"paid":"Balance"}))
+    except Exception as ex:
+        print("buybalance err",ex,flush=True)
+    msg = (f"✅ Purchased <b>{p['name']} · {p['len']}</b> with your balance! "
+           f"New balance: <b>${acct['balance']:.2f}</b><br>Here's your key:")
+    if tab == "seller":
+        msg += f"<br><small>DM {OWNER_NAME} with this key to claim.</small>"
+    return render(tab=tab,step="done",result=msg,result_class="ok",key=key,pname=f"{p['name']} {p['len']}")
 
 @app.route("/getcode",methods=["POST"])
 def getcode():
