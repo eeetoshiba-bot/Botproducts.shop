@@ -7,9 +7,12 @@ from flask import Flask, request, render_template_string, session, redirect
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))  # for login sessions
-# ---- Gmail SMTP (sends login verification codes) ----
-SMTP_EMAIL   = os.getenv("SMTP_EMAIL", "")       # your Gmail address
-SMTP_PASS    = os.getenv("SMTP_PASS", "")        # Gmail App Password (no spaces)
+# ---- Email sending (Brevo API — works on Render, unlike SMTP) ----
+BREVO_KEY    = os.getenv("BREVO_KEY", "")         # Brevo API key
+BREVO_SENDER = os.getenv("BREVO_SENDER", "")      # a verified sender email in Brevo
+# legacy SMTP (kept as fallback if you ever move hosts)
+SMTP_EMAIL   = os.getenv("SMTP_EMAIL", "")
+SMTP_PASS    = os.getenv("SMTP_PASS", "")
 SMTP_HOST    = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT    = int(os.getenv("SMTP_PORT", "587"))
 REDIS_URL    = os.getenv("UPSTASH_REDIS_REST_URL", "")
@@ -33,6 +36,8 @@ PRODUCTS = {
  "premiummonth":    {"pid":"p3","name":"Premium","len":"1 month","robux":300,"tone":"grape"},
  "premiumunlimited":{"pid":"p4","name":"Premium","len":"Unlimited","robux":550,"tone":"sun","note":"or 1 server boost"},
  "premiumimmune":   {"pid":"p5","name":"Premium + Immune","len":"Unlimited","robux":1000,"tone":"flame","note":"or 2 boosts · blacklist-immune"},
+ "robloxscripting": {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame", "note":"DM ultra109.yeh with your key to claim"},
+ "game thumbnail": {"pid":"s5","name":"have the user create your art for your roblox game thumbnail","len":"Game thumbnail","robux":100,"tone":"flame", "note":"DM absolute_cyn.ema with your key to claim"},
 }
 # Seller Deals — manual fulfilment (DM owner with the key)
 SELLER_DEALS = {
@@ -42,8 +47,6 @@ SELLER_DEALS = {
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
  "distro9m":   {"pid":"s3","name":"DistroKid Upload","len":"Under 9M views","robux":200,"tone":"sky",
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
- "robloxscripting": {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame", "note":"DM ultra109.yeh with your key to claim"},
- "game thumbnail": {"pid":"s5","name":"have the user create your art for your roblox game thumbnail","len":"Game thumbnail","robux":100,"tone":"flame", "note":"DM absolute_cyn.ema with your key to claim"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
@@ -79,25 +82,40 @@ def gen_key(n=20): return "".join(secrets.choice(KEY_CHARS) for _ in range(n))
 #    logincode:{email} -> 6-digit code (EX 600)
 # ================================================================
 def send_email(to_addr, subject, body):
-    """Send an email via Gmail SMTP. Returns (ok, error)."""
-    if not SMTP_EMAIL or not SMTP_PASS:
-        return False, "smtp not configured"
-    import smtplib
-    from email.mime.text import MIMEText
-    try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = SMTP_EMAIL
-        msg["To"] = to_addr
-        s = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
-        s.starttls()
-        s.login(SMTP_EMAIL, SMTP_PASS)
-        s.sendmail(SMTP_EMAIL, [to_addr], msg.as_string())
-        s.quit()
-        return True, None
-    except Exception as ex:
-        print(f"email send err: {ex}", flush=True)
-        return False, str(ex)
+    """Send email via Brevo API (works on Render). Falls back to SMTP if configured."""
+    # --- Brevo API (HTTPS, not blocked by Render) ---
+    if BREVO_KEY and BREVO_SENDER:
+        try:
+            r = requests.post("https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": BREVO_KEY, "Content-Type": "application/json", "accept": "application/json"},
+                json={
+                    "sender": {"email": BREVO_SENDER, "name": "Robuks Generator"},
+                    "to": [{"email": to_addr}],
+                    "subject": subject,
+                    "textContent": body,
+                }, timeout=15)
+            if r.status_code in (200, 201, 202):
+                return True, None
+            print(f"brevo err {r.status_code}: {r.text[:200]}", flush=True)
+            return False, f"brevo {r.status_code}"
+        except Exception as ex:
+            print(f"brevo exc: {ex}", flush=True)
+            return False, str(ex)
+    # --- SMTP fallback (only works off Render) ---
+    if SMTP_EMAIL and SMTP_PASS:
+        import smtplib
+        from email.mime.text import MIMEText
+        try:
+            msg = MIMEText(body)
+            msg["Subject"] = subject; msg["From"] = SMTP_EMAIL; msg["To"] = to_addr
+            s = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
+            s.starttls(); s.login(SMTP_EMAIL, SMTP_PASS)
+            s.sendmail(SMTP_EMAIL, [to_addr], msg.as_string()); s.quit()
+            return True, None
+        except Exception as ex:
+            print(f"smtp err: {ex}", flush=True)
+            return False, str(ex)
+    return False, "no email service configured"
 
 def get_account(email):
     try:
@@ -389,7 +407,7 @@ def render(**kw):
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v36-bonus", 200
+def version(): return "shop build=v37-brevo", 200
 
 LOGIN_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Login — Robuks</title>
