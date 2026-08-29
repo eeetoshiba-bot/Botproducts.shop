@@ -437,7 +437,7 @@ def testemail():
     return out, 200
 
 @app.route("/version")
-def version(): return "shop build=v39-resend", 200
+def version(): return "shop build=v40-codefix", 200
 
 LOGIN_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Login — Robuks</title>
@@ -487,8 +487,13 @@ def login():
         email = request.form.get("email","").strip().lower()
         code = request.form.get("code","").strip()
         try: want = _redis("GET", f"logincode:{email}")
-        except Exception: want = None
-        if not want or code != want:
+        except Exception as ex:
+            print(f"logincode GET err: {ex}", flush=True); want = None
+        # normalize both sides (strip quotes/spaces) to avoid false mismatches
+        want_s = str(want).strip().strip('"').strip() if want is not None else ""
+        code_s = str(code).strip().strip('"').strip()
+        print(f"🔐 login check email={email} entered={code_s!r} stored={want_s!r} match={code_s==want_s}", flush=True)
+        if not want_s or code_s != want_s:
             return page(f"""<h2>❌ Wrong code</h2><div class='msg err'>That code is wrong or expired.</div>
             <form method="POST"><input type="hidden" name="stage" value="code">
             <input type="hidden" name="email" value="{email}">
