@@ -3,9 +3,15 @@
 # Auto-creates gamepasses via Roblox Open Cloud. Bio-code identity check.
 import os, json, time, secrets, string, datetime
 import requests
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, session, redirect
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))  # for login sessions
+# ---- Gmail SMTP (sends login verification codes) ----
+SMTP_EMAIL   = os.getenv("SMTP_EMAIL", "")       # your Gmail address
+SMTP_PASS    = os.getenv("SMTP_PASS", "")        # Gmail App Password (no spaces)
+SMTP_HOST    = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT    = int(os.getenv("SMTP_PORT", "587"))
 REDIS_URL    = os.getenv("UPSTASH_REDIS_REST_URL", "")
 REDIS_TOKEN  = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 ROBLOX_API_KEY = os.getenv("ROBLOX_API_KEY", "")
@@ -13,7 +19,10 @@ UNIVERSE_ID    = os.getenv("UNIVERSE_ID", "34574007")
 LOGO_URL     = os.getenv("LOGO_URL", "")
 OWNER_NAME   = "kiwi_brown_dog"
 PAYPAL_ME    = os.getenv("PAYPAL_ME", "RalseiPlush")   # paypal.me/RalseiPlush (env can override)
-# ---- PayPal: manual fulfilment (buyer DMs owner a screenshot) ----
+# ---- PayPal email-reading detection (no Business API needed) ----
+PP_EMAIL     = os.getenv("PP_EMAIL", "")        # the Gmail that receives PayPal receipts
+PP_EMAIL_PASS= os.getenv("PP_EMAIL_PASS", "")   # Gmail App Password (not your normal password)
+PP_IMAP_HOST = os.getenv("PP_IMAP_HOST", "imap.gmail.com")
 # rough Robux -> USD for showing a PayPal price (Robux ÷ this = $). ~100 R$ ≈ $1 by default.
 RBX_PER_USD  = int(os.getenv("RBX_PER_USD", "200"))   # 200 R$ = $1  (so 100 R$ = $0.50)
 
@@ -34,7 +43,7 @@ SELLER_DEALS = {
  "distro9m":   {"pid":"s3","name":"DistroKid Upload","len":"Under 9M views","robux":200,"tone":"sky",
                 "note":"upload your audio · DM " + OWNER_NAME + " with your key"},
  "robloxscripting": {"pid":"s4","name":"the person will make scripts that are for EXPLOITS only!!","len":"Roblox exploits script maker","robux":100,"tone":"flame", "note":"DM ultra109.yeh with your key to claim"},
-  "game thumbnail": {"pid":"s5","name":"have the user create your art for your roblox game thumbnail","len":"Game thumbnail","robux":100,"tone":"flame", "note":"DM absolute_cyn.ema with your key to claim"},
+ "game thumbnail": {"pid":"s5","name":"have the user create your art for your roblox game thumbnail","len":"Game thumbnail","robux":100,"tone":"flame", "note":"DM absolute_cyn.ema with your key to claim"},
 }
 UNBLACKLIST=[{"len":"1 hour","robux":5},{"len":"1 day","robux":20},{"len":"1 week","robux":50},{"len":"Permanent","robux":150}]
 KEY_CHARS=string.ascii_uppercase+string.digits+"!@#$%&*"
@@ -62,6 +71,53 @@ def _redis(*c):
     r.raise_for_status(); return r.json().get("result")
 def gen_key(n=20): return "".join(secrets.choice(KEY_CHARS) for _ in range(n))
 
+# ================================================================
+#  🔐 LOGIN / ACCOUNTS / BALANCE
+#  accounts stored in Upstash:
+#    acct:{email}      -> {"email","username","balance","created"}
+#    acctname:{uname}  -> email   (so bot can credit by username)
+#    logincode:{email} -> 6-digit code (EX 600)
+# ================================================================
+def send_email(to_addr, subject, body):
+    """Send an email via Gmail SMTP. Returns (ok, error)."""
+    if not SMTP_EMAIL or not SMTP_PASS:
+        return False, "smtp not configured"
+    import smtplib
+    from email.mime.text import MIMEText
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = SMTP_EMAIL
+        msg["To"] = to_addr
+        s = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
+        s.starttls()
+        s.login(SMTP_EMAIL, SMTP_PASS)
+        s.sendmail(SMTP_EMAIL, [to_addr], msg.as_string())
+        s.quit()
+        return True, None
+    except Exception as ex:
+        print(f"email send err: {ex}", flush=True)
+        return False, str(ex)
+
+def get_account(email):
+    try:
+        raw = _redis("GET", f"acct:{email.lower()}")
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+def save_account(acct):
+    try:
+        _redis("SET", f"acct:{acct['email'].lower()}", json.dumps(acct))
+        if acct.get("username"):
+            _redis("SET", f"acctname:{acct['username'].lower()}", acct["email"].lower())
+    except Exception as ex:
+        print("save acct err", ex, flush=True)
+
+def current_user():
+    email = session.get("email")
+    return get_account(email) if email else None
+
 _WORDS=["unicorn","friends","dragon","cookie","rocket","banana","pixel","ninja","turbo","galaxy",
         "noodle","waffle","cactus","pickle","zebra","comet","donut","llama","mango","panda",
         "robot","sunny","tiger","viper","wizard","yeti","bubble","cloud"]
@@ -76,6 +132,47 @@ def roblox_bio(uid):
     except Exception as ex: print("bio err",ex,flush=True)
     return ""
 
+def check_paypal_email(expected_usd, note_contains):
+    """Scan the PayPal inbox for a recent payment matching amount + a note (e.g. username).
+    Returns (found, reason). Reads PayPal receipt emails — no Business API needed."""
+    if not PP_EMAIL or not PP_EMAIL_PASS:
+        return False, "email not configured"
+    import imaplib, email as emaillib
+    from email.header import decode_header
+    try:
+        M = imaplib.IMAP4_SSL(PP_IMAP_HOST)
+        M.login(PP_EMAIL, PP_EMAIL_PASS)
+        M.select("INBOX")
+        typ, data = M.search(None, '(FROM "paypal" UNSEEN)')
+        ids = data[0].split()
+        found = False
+        for num in ids[-25:][::-1]:
+            typ, msg_data = M.fetch(num, "(RFC822)")
+            msg = emaillib.message_from_bytes(msg_data[0][1])
+            subj = ""
+            for part, enc in decode_header(msg.get("Subject", "")):
+                subj += part.decode(enc or "utf-8", "ignore") if isinstance(part, bytes) else str(part)
+            body = ""
+            if msg.is_multipart():
+                for p in msg.walk():
+                    if p.get_content_type() in ("text/plain", "text/html"):
+                        try: body += p.get_payload(decode=True).decode("utf-8", "ignore")
+                        except Exception: pass
+            else:
+                try: body = msg.get_payload(decode=True).decode("utf-8", "ignore")
+                except Exception: pass
+            blob = (subj + " " + body).lower()
+            amt = f"{expected_usd:.2f}"
+            got_money = any(x in blob for x in ("you received", "you've got money", "sent you", "payment received"))
+            if got_money and amt in blob and note_contains.lower() in blob:
+                found = True
+                M.store(num, '+FLAGS', '\\Seen')
+                break
+        M.logout()
+        return found, ("match" if found else "no matching email yet")
+    except Exception as ex:
+        print(f"paypal email err: {ex}", flush=True)
+        return False, str(ex)
 def roblox_user_id(u):
     try:
         r=requests.post("https://users.roblox.com/v1/usernames/users",
@@ -211,9 +308,7 @@ input:focus{outline:none;box-shadow:3px 3px 0 var(--grape)}
 {% if paypal %}
 <div style="margin-top:16px;padding:14px;border:3px dashed var(--edge);border-radius:14px;background:#f0f6ff">
   <b>💳 Prefer PayPal?</b>
-  <p style="margin:6px 0 10px">1. Pay <b>${{ p.usd }}</b> to <b>paypal.me/{{ paypal }}</b>.<br>
-     2. <b>Screenshot</b> your payment receipt.<br>
-     3. Tap the button below, then <b>DM {{ owner }}</b> on Discord with that screenshot.</p>
+  <p style="margin:6px 0 10px">Pay <b>${{ p.usd }}</b> to <b>paypal.me/{{ paypal }}</b>, then DM <b>{{ owner }}</b> on Discord with your payment screenshot to get your {{p.name}}.</p>
   <a class="go" href="https://paypal.me/{{ paypal }}/{{ p.usd }}" target="_blank" style="background:#ffcb3a">💳 Pay ${{ p.usd }} with PayPal</a>
 </div>
 {% endif %}
@@ -274,10 +369,119 @@ def render(**kw):
     if "p" in kw and isinstance(kw["p"], dict):
         kw["p"] = dict(kw["p"])
         kw["p"]["usd"] = round(kw["p"].get("robux", 0) / RBX_PER_USD, 2)
+    # a short PayPal note-code so we can match their payment email
+    if kw.get("step") == "name" and "ppcode" not in kw:
+        kw["ppcode"] = "PP" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
     base.update(kw); return render_template_string(PAGE,**base)
 
 @app.route("/version")
-def version(): return "shop build=v32-restored", 200
+def version(): return "shop build=v33-login", 200
+
+LOGIN_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Login — Robuks</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Baloo+2:wght@700;800&display=swap');
+body{background:linear-gradient(180deg,#fff4e6,#ffe9cf);font-family:'Fredoka',sans-serif;color:#2a2140;min-height:100vh;display:grid;place-items:center;padding:20px}
+.box{background:#fff;border:3px solid #2a2140;border-radius:22px;box-shadow:6px 6px 0 #2a2140;padding:28px;max-width:400px;width:100%}
+h2{font-family:'Baloo 2';font-weight:800;font-size:24px;margin-bottom:6px}
+p{color:#7c6f92;font-size:14px;margin-bottom:16px}
+label{display:block;font-weight:600;font-size:13px;margin:10px 0 6px}
+input{width:100%;padding:12px 14px;border:3px solid #2a2140;border-radius:14px;background:#fffaf0;font-family:'Fredoka';font-weight:600;font-size:15px;box-sizing:border-box}
+.go{margin-top:16px;width:100%;padding:14px;border:3px solid #2a2140;border-radius:15px;background:linear-gradient(90deg,#33e6a6,#3fb9ff);color:#2a2140;font-family:'Baloo 2';font-weight:800;font-size:16px;cursor:pointer;box-shadow:5px 5px 0 #2a2140}
+.msg{margin-top:14px;padding:12px;border-radius:12px;border:3px solid #2a2140;font-size:14px}
+.err{background:#ffe7e7}.ok{background:#e3fff4}
+a{color:#a06bff}
+</style></head><body><div class="box">
+{{ inner|safe }}
+</div></body></html>"""
+
+@app.route("/login", methods=["GET","POST"])
+def login():
+    def page(inner): return render_template_string(LOGIN_PAGE, inner=inner)
+    if request.method == "GET":
+        if current_user(): return redirect("/account")
+        return page("""<h2>🔐 Login</h2><p>Enter your Gmail — we'll email you a code.</p>
+        <form method="POST"><input type="hidden" name="stage" value="email">
+        <label>Gmail address</label><input name="email" type="email" placeholder="you@gmail.com" required>
+        <button class="go">Send me a code →</button></form>""")
+    stage = request.form.get("stage")
+    if stage == "email":
+        email = request.form.get("email","").strip().lower()
+        if not email.endswith("@gmail.com"):
+            return page("<h2>🔐 Login</h2><div class='msg err'>Please use a Gmail address.</div><p><a href='/login'>Try again</a></p>")
+        code = f"{secrets.randbelow(900000)+100000}"
+        try: _redis("SET", f"logincode:{email}", code, "EX", "600")
+        except Exception: pass
+        ok, err = send_email(email, "Your Robuks login code",
+                             f"Your login code is: {code}\n\nIt expires in 10 minutes.")
+        if not ok:
+            return page(f"<h2>🔐 Login</h2><div class='msg err'>Couldn't send email ({err}).</div>")
+        return page(f"""<h2>📧 Check your email</h2><p>We sent a 6-digit code to <b>{email}</b>.</p>
+        <form method="POST"><input type="hidden" name="stage" value="code">
+        <input type="hidden" name="email" value="{email}">
+        <label>Enter code</label><input name="code" placeholder="123456" required>
+        <button class="go">Verify →</button></form>""")
+    if stage == "code":
+        email = request.form.get("email","").strip().lower()
+        code = request.form.get("code","").strip()
+        try: want = _redis("GET", f"logincode:{email}")
+        except Exception: want = None
+        if not want or code != want:
+            return page(f"""<h2>❌ Wrong code</h2><div class='msg err'>That code is wrong or expired.</div>
+            <form method="POST"><input type="hidden" name="stage" value="code">
+            <input type="hidden" name="email" value="{email}">
+            <label>Enter code</label><input name="code" placeholder="123456" required>
+            <button class="go">Verify →</button></form>""")
+        try: _redis("DEL", f"logincode:{email}")
+        except Exception: pass
+        acct = get_account(email)
+        if not acct:
+            # new user → make username
+            session["pending_email"] = email
+            return page(f"""<h2>👤 Create username</h2><p>Almost done! Pick a username.</p>
+            <form method="POST" action="/setusername">
+            <label>Username</label><input name="username" placeholder="cooluser123" required>
+            <button class="go">Create account →</button></form>""")
+        session["email"] = email
+        return redirect("/account")
+    return redirect("/login")
+
+@app.route("/setusername", methods=["POST"])
+def setusername():
+    email = session.get("pending_email")
+    if not email: return redirect("/login")
+    uname = request.form.get("username","").strip()
+    def page(inner): return render_template_string(LOGIN_PAGE, inner=inner)
+    if len(uname) < 3 or not uname.replace("_","").isalnum():
+        return page("<h2>👤 Create username</h2><div class='msg err'>3+ letters/numbers only.</div><p><a href='/login'>Back</a></p>")
+    # taken?
+    try:
+        if _redis("GET", f"acctname:{uname.lower()}"):
+            return page(f"""<h2>👤 Create username</h2><div class='msg err'>'{uname}' is taken.</div>
+            <form method="POST" action="/setusername"><label>Username</label>
+            <input name="username" required><button class="go">Create →</button></form>""")
+    except Exception: pass
+    acct = {"email": email, "username": uname, "balance": 0.0, "created": int(time.time())}
+    save_account(acct)
+    session.pop("pending_email", None)
+    session["email"] = email
+    return redirect("/account")
+
+@app.route("/account")
+def account():
+    acct = current_user()
+    if not acct: return redirect("/login")
+    inner = f"""<h2>👤 {acct['username']}</h2>
+    <p>{acct['email']}</p>
+    <div class='msg ok'>💰 Balance: <b>${acct.get('balance',0):.2f}</b></div>
+    <p style='margin-top:14px'>Use your balance to buy products in the <a href='/'>shop</a>.</p>
+    <p><a href='/logout'>Log out</a></p>"""
+    return render_template_string(LOGIN_PAGE, inner=inner)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
 
 @app.route("/testcreate")
 def testcreate():
@@ -305,6 +509,55 @@ def start():
     if get_stock(cat[product]["pid"]) <= 0:
         return render(tab=tab,step=1,items=cat,result="❌ That product is out of stock.",result_class="err")
     return render(tab=tab,step="name",items=cat,product=product,p=cat[product])
+
+@app.route("/checkpaypal",methods=["POST"])
+def checkpaypal():
+    """Buyer paid via PayPal with their code in the note → read inbox → auto-issue key."""
+    tab=request.form.get("tab","premium"); product=request.form.get("product","")
+    ppcode=request.form.get("ppcode","").strip()
+    username=request.form.get("username","").strip()
+    cat=catalog(tab)
+    if product not in cat: return render(tab=tab,step=1,items=cat,result="❌ Unknown plan.",result_class="err")
+    p=cat[product]
+    usd = round(p["robux"]/RBX_PER_USD, 2)
+    if not ppcode:
+        return render(tab=tab,step="name",items=cat,product=product,p=p,
+                      result="❌ Missing your payment code — go back and try again.",result_class="err")
+    # already used this code? (prevents double-claims)
+    try:
+        if _redis("GET", f"ppused:{ppcode}"):
+            return render(tab=tab,step="name",items=cat,product=product,p=p,
+                          result="❌ This payment code was already used.",result_class="err")
+    except Exception: pass
+    # read the inbox for a matching PayPal receipt
+    ok, why = check_paypal_email(usd, ppcode)
+    if not ok:
+        return render(tab=tab,step="name",items=cat,product=product,p=p,
+                      result=f"⏳ No matching PayPal payment found yet ({why}). "
+                             f"Make sure you sent <b>${usd}</b> with code <b>{ppcode}</b> in the note, "
+                             f"then wait ~30s and tap verify again.",result_class="err")
+    # payment found → issue key
+    key=gen_key()
+    entry=json.dumps({"kind":tab,"product":product,"product_name":f"{p['name']} {p['len']}",
+                      "used_by":None,"created":int(time.time()),"roblox_id":None,
+                      "roblox_name":username or "PayPal buyer","paid":"paypal"})
+    try:
+        _redis("SET",f"key:{key}",entry)
+        _redis("SET",f"ppused:{ppcode}","1")
+        dec_stock(p["pid"])
+        # notify owner of the paypal sale
+        _redis("RPUSH","sellerorders",json.dumps({
+            "kind":tab,"key":key,"product":f"{p['name']} {p['len']}",
+            "roblox":username or "PayPal buyer","ts":int(time.time()),"paid":"PayPal"}))
+    except Exception as ex:
+        print("pp store err",ex,flush=True)
+        return render(tab=tab,step="done",result="⚠️ Payment found but key store failed — DM the owner.",result_class="err")
+    print(f"💳 PAYPAL KEY ISSUED product={product} code={ppcode} key={key[:6]}…",flush=True)
+    if tab=="seller":
+        msg=f"✅ PayPal payment confirmed! Here's your <b>{p['name']} · {p['len']}</b> key:"
+    else:
+        msg=f"✅ PayPal payment confirmed! Here's your key:"
+    return render(tab=tab,step="done",result=msg,result_class="ok",key=key,pname=f"{p['name']} {p['len']}")
 
 @app.route("/ipaid",methods=["POST"])
 def ipaid():
